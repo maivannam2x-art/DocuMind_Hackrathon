@@ -33,12 +33,22 @@ export async function POST(request: NextRequest, context: Context) {
     if (analysis.status !== "completed") throw new ApiError(409, "ANALYSIS_NOT_COMPLETE", "Bạn có thể hỏi tiếp sau khi phân tích hoàn tất.");
     const body = safeBody(chatSchema, await request.json());
     const db = getAdminDb();
-    const { data: result } = await db.from("analysis_results").select("result_json,summary").eq("analysis_id", id).eq("is_current", true).maybeSingle();
+    const [{ data: result }, { data: history, error: historyError }] = await Promise.all([
+      db.from("analysis_results").select("result_json,summary").eq("analysis_id", id).eq("is_current", true).maybeSingle(),
+      db.from("chat_messages").select("role,content").eq("analysis_id", id).order("created_at", { ascending: false }).limit(8),
+    ]);
+    if (historyError) throw new ApiError(500, "CHAT_LOAD_FAILED", "Không tải được ngữ cảnh trò chuyện.", historyError.message);
     if (!result) throw new ApiError(404, "RESULT_NOT_FOUND", "Không tìm thấy kết quả phân tích.");
     const prompt = await loadPrompt("chat", analysis.topic_id, analysis.specialization_id);
+    const groundedContext = [
+      result.summary ?? "",
+      JSON.stringify(result.result_json).slice(0, 8000),
+      ...(history ?? []).reverse().map((message: { role: string; content: string }) => `${message.role}: ${message.content}`),
+    ].filter(Boolean).join("\n").slice(0, 12000);
     const userPrompt = prompt.user_prompt_template
-      .replace(/\{\{\s*topic\s*\}\}/g, analysis.topic_id ?? "Tổng quát")
-      .replace(/\{\{\s*summary\s*\}\}/g, result.summary ?? JSON.stringify(result.result_json).slice(0, 5000))
+      .replace(/\{\{\s*topic\s*\}\}/g, "Công nghệ thông tin")
+      .replace(/\{\{\s*summary\s*\}\}/g, groundedContext)
+      .replace(/\{\{\s*history\s*\}\}/g, (history ?? []).reverse().map((message: { role: string; content: string }) => `${message.role}: ${message.content}`).join("\n"))
       .replace(/\{\{\s*question\s*\}\}/g, body.message);
     const started = Date.now();
     const completion = await generateLlm({ purpose: "chat", system: prompt.system_prompt, prompt: userPrompt, schema: prompt.output_schema });

@@ -24,7 +24,7 @@ An analysis is not sent to an LLM before confirmation. Each chunk is persisted, 
 - POST /api/analyses, GET /api/analyses
 - GET /api/analyses/:id, POST /validate, PATCH /review, POST /confirm, POST /run, GET /result
 - GET /api/analyses/:id/quiz, POST /quiz/attempts
-- POST /api/analyses/:id/chat
+- GET/POST /api/analyses/:id/chat
 - POST /api/analyses/:id/exports
 
 Guest requests receive an HttpOnly dm_guest cookie. Guest data stops being accessible at its expiry time; the scheduled cleanup then removes expired rows and stored files. Configure CRON_SECRET in the hosting environment for cleanup. Authenticated history is scoped by Supabase Auth user ID. Public clients cannot modify analysis state or read quiz answers directly.

@@ -87,7 +87,7 @@ function mockResponse(request: LlmRequest): unknown {
     const source = prompt.match(/Nội dung:\s*([\s\S]+)$/)?.[1] ?? prompt;
     const sentences = source.split(/(?<=[.!?])\s+|\n+/).map(x => x.trim()).filter(x => x.length > 30);
     const make = (sentence: string, index: number) => ({
-      prompt: `Ý chính nào được nêu trong tài liệu? (${index + 1})`,
+      prompt: `Theo tài liệu, phát biểu nào mô tả đúng nội dung ở câu ${index + 1}?`,
       options: [sentence.slice(0, 160), "Nội dung này không được đề cập trong nguồn.", "Tài liệu đưa ra kết luận ngược lại.", "Không có thông tin liên quan."],
       answerIndex: 0,
       explanation: "Đáp án được trích từ đoạn nội dung nguồn.",

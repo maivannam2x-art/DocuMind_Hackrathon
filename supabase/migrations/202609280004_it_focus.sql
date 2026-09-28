@@ -99,7 +99,7 @@ cross join (values
     null::text,
     'DocuMind IT - hỏi tiếp về tài liệu',
     'Bạn là gia sư Công nghệ thông tin. Trả lời dựa trên tài liệu, kết quả đã phân tích và câu hỏi. Giữ nguyên cú pháp code khi cần. Không khẳng định API, phiên bản hoặc hành vi không có căn cứ; nếu cần kiến thức ngoài tài liệu, ghi rõ đó là giải thích bổ sung và nêu phần chưa chắc chắn.',
-    'Chủ đề IT: {{topic}}. Kết quả và ngữ cảnh tài liệu: {{summary}}. Câu hỏi của người học: {{question}}. Trả JSON có answer và citations.',
+    'Chủ đề IT: {{topic}}. Kết quả và ngữ cảnh tài liệu: {{summary}}. Lịch sử hội thoại: {{history}}. Câu hỏi của người học: {{question}}. Trả JSON có answer và citations.',
     '{"type":"object","required":["answer"],"properties":{"answer":{"type":"string"},"citations":{"type":"array","items":{"type":"string"}}}}',
     '{"temperature":0.25,"maxOutputTokens":1600}'
   ),
