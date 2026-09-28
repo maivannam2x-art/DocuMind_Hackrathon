@@ -1,0 +1,265 @@
+import type { RequestIdentity } from "@/lib/auth";
+import { getAnalysis } from "@/lib/auth";
+import { getAdminDb } from "@/lib/db";
+import { ApiError } from "@/lib/http";
+import { assertResult } from "@/lib/validation";
+import { generateLlm, loadPrompt, type LlmPurpose, type LlmResult } from "@/lib/llm";
+
+type ChunkRow = { id: string; input_id: string; chunk_index: number; title: string | null; content: string; status: string; retry_count: number; generated_content?: unknown };
+type PromptRow = { id: string; system_prompt: string; user_prompt_template: string; output_schema: unknown; model_config: Record<string, unknown> };
+
+function renderPrompt(template: string, values: Record<string, string>) {
+  return template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, key: string) => values[key] ?? "");
+}
+
+async function saveExchange(args: {
+  analysisId: string; chunkId?: string | null; promptId?: string | null; purpose: string;
+  result?: LlmResult; attempt: number; requestPayload: unknown; error?: unknown;
+}) {
+  const db = getAdminDb();
+  const result = args.result;
+  const { error } = await db.from("llm_exchanges").insert({
+    analysis_id: args.analysisId,
+    chunk_id: args.chunkId ?? null,
+    prompt_template_id: args.promptId ?? null,
+    purpose: args.purpose,
+    provider: result?.provider ?? process.env.LLM_PROVIDER ?? "mock",
+    model: result?.model ?? process.env.GEMINI_MODEL ?? "documind-deterministic",
+    attempt: args.attempt,
+    request_payload: args.requestPayload,
+    response_payload: result?.value ?? null,
+    input_tokens: result?.inputTokens ?? null,
+    output_tokens: result?.outputTokens ?? null,
+    latency_ms: result?.latencyMs ?? null,
+    status: args.error ? "failed" : "succeeded",
+    error_message: args.error instanceof Error ? args.error.message : args.error ? String(args.error) : null,
+  });
+  if (error) console.error("Unable to persist LLM exchange", error.message);
+}
+
+async function invokeAndLog(analysisId: string, chunkId: string | null, purpose: LlmPurpose, prompt: PromptRow, userPrompt: string, attempt: number) {
+  const request = { purpose, system: prompt.system_prompt, prompt: userPrompt, schema: prompt.output_schema };
+  try {
+    const result = await generateLlm(request);
+    await saveExchange({ analysisId, chunkId, promptId: prompt.id, purpose, result, attempt, requestPayload: { system: request.system, prompt: userPrompt, schema: request.schema } });
+    return result;
+  } catch (error) {
+    await saveExchange({ analysisId, chunkId, promptId: prompt.id, purpose, attempt, requestPayload: { prompt: userPrompt }, error });
+    throw error;
+  }
+}
+
+function flattenSections(parts: Array<{ chunk: ChunkRow; value: ReturnType<typeof assertResult> }>) {
+  const sections: Array<{ title: string; summary?: string; blocks: Array<{ type: string; content: unknown; metadata?: Record<string, unknown> }> }> = [];
+  const byTitle = new Map<string, (typeof sections)[number]>();
+  for (const { chunk, value } of parts) {
+    for (const section of value.sections) {
+      const title = section.title.trim() || chunk.title || `Phần ${sections.length + 1}`;
+      const key = title.toLocaleLowerCase();
+      let target = byTitle.get(key);
+      if (!target) {
+        target = { title, summary: section.summary, blocks: [] };
+        byTitle.set(key, target);
+        sections.push(target);
+      }
+      target.blocks.push(...section.blocks);
+    }
+  }
+  return sections;
+}
+
+async function resolveITSpecialization(analysis: Record<string, unknown>, sourceText: string) {
+  const db = getAdminDb();
+  const { data: itTopic, error: topicError } = await db.from("topics").select("id").eq("code", "IT").eq("is_active", true).maybeSingle();
+  if (topicError || !itTopic) throw new ApiError(500, "IT_TOPIC_NOT_CONFIGURED", "Chưa cấu hình chủ đề Công nghệ thông tin.");
+  const topicId = itTopic.id as string;
+  if (analysis.specialization_id) {
+    const { data: specialization } = await db.from("topic_specializations").select("id,name,slug")
+      .eq("id", analysis.specialization_id).eq("topic_id", topicId).maybeSingle();
+    if (specialization) return { topicId, specializationId: specialization.id as string, specializationName: specialization.name as string };
+  }
+  const prompt = await loadPrompt("topic_detection");
+  const userPrompt = renderPrompt(prompt.user_prompt_template, {
+    topic: "Công nghệ thông tin", content: sourceText.slice(0, 5000),
+  });
+  const result = await invokeAndLog(analysis.id as string, null, "topic_detection", prompt, userPrompt, 1);
+  const suggestedSlug = typeof result.value === "object" && result.value && "specializationSlug" in result.value
+    ? String((result.value as { specializationSlug: string }).specializationSlug) : "it-fundamentals";
+  const { data: detected } = await db.from("topic_specializations").select("id,name,slug")
+    .eq("topic_id", topicId).eq("slug", suggestedSlug).eq("is_active", true).maybeSingle();
+  const { data: fallback } = detected ? { data: null } : await db.from("topic_specializations").select("id,name,slug")
+    .eq("topic_id", topicId).eq("slug", "it-fundamentals").eq("is_active", true).maybeSingle();
+  const specialization = detected ?? fallback;
+  const specializationId = specialization?.id as string | undefined;
+  await db.from("analyses").update({
+    topic_id: topicId, specialization_id: specializationId ?? null,
+    model_provider: result.provider, model_name: result.model,
+  }).eq("id", analysis.id);
+  return {
+    topicId,
+    specializationId: specializationId ?? null,
+    specializationName: (specialization?.name as string | undefined) ?? "Công nghệ thông tin",
+  };
+}
+
+async function loadSectionPrompt(analysis: Record<string, unknown>, topicId: string, specializationId: string | null) {
+  const db = getAdminDb();
+  if (analysis.prompt_template_id) {
+    const { data: selected } = await db.from("prompt_templates").select("*")
+      .eq("id", analysis.prompt_template_id).eq("purpose", "section_generation")
+      .eq("topic_id", topicId).eq("is_active", true).maybeSingle();
+    if (selected && (!selected.specialization_id || selected.specialization_id === specializationId)) return selected as PromptRow;
+  }
+  return loadPrompt("section_generation", topicId, specializationId) as Promise<PromptRow>;
+}
+
+export async function runAnalysis(identity: RequestIdentity, analysisId: string) {
+  const db = getAdminDb();
+  const analysis = await getAnalysis(identity, analysisId);
+  if (!analysis.confirmed_at || !["ready", "failed"].includes(analysis.status)) {
+    throw new ApiError(409, "ANALYSIS_NOT_READY", "Chỉ có thể chạy phân tích sau khi người dùng xem và xác nhận đầu vào.", { status: analysis.status });
+  }
+  const { data: claimed, error: claimError } = await db.from("analyses").update({
+    status: "processing", error_code: null, error_message: null, completed_at: null,
+  }).eq("id", analysisId).match(identity.userId ? { user_id: identity.userId } : { guest_session_hash: identity.guestHash })
+    .in("status", ["ready", "failed"]).select("*").maybeSingle();
+  if (claimError) throw new ApiError(500, "DATABASE_ERROR", "Không thể bắt đầu xử lý.", claimError.message);
+  if (!claimed) throw new ApiError(409, "ANALYSIS_ALREADY_RUNNING", "Phân tích đã được bắt đầu ở một yêu cầu khác.");
+
+  try {
+    const { data: inputRows, error: inputError } = await db.from("analysis_inputs").select("id,edited_text,normalized_text,original_text")
+      .eq("analysis_id", analysisId).order("position");
+    if (inputError || !inputRows?.length) throw new ApiError(422, "NO_ANALYSIS_INPUT", "Phân tích không có nội dung nguồn.");
+    const allText = inputRows.map((row: { edited_text?: string | null; normalized_text?: string | null; original_text?: string | null }) => row.edited_text ?? row.normalized_text ?? row.original_text ?? "").join("\n\n");
+    const itContext = await resolveITSpecialization(claimed, allText);
+    const { data: chunks, error: chunkError } = await db.from("analysis_chunks").select("*").eq("analysis_id", analysisId).order("chunk_index");
+    if (chunkError || !chunks?.length) throw new ApiError(422, "NO_ANALYSIS_CHUNKS", "Hãy kiểm tra và xác nhận cấu trúc tài liệu trước khi chạy.");
+    const sectionPrompt = await loadSectionPrompt(claimed, itContext.topicId, itContext.specializationId);
+    const completed: Array<{ chunk: ChunkRow; value: ReturnType<typeof assertResult> }> = [];
+    for (const chunk of chunks as ChunkRow[]) {
+      if (chunk.status === "complete" && chunk.generated_content) {
+        try { completed.push({ chunk, value: assertResult(chunk.generated_content) }); continue; } catch { /* regenerate bad persisted output */ }
+      }
+      await db.from("analysis_chunks").update({ status: "processing", error_message: null }).eq("id", chunk.id);
+      const userPrompt = renderPrompt(sectionPrompt.user_prompt_template, {
+        topic: itContext.specializationName,
+        custom_prompt: claimed.custom_prompt ?? "",
+        content: chunk.content,
+      });
+      try {
+        let llm = await invokeAndLog(analysisId, chunk.id, "section_generation", sectionPrompt, userPrompt, chunk.retry_count + 1);
+        let value: ReturnType<typeof assertResult>;
+        try { value = assertResult(llm.value); }
+        catch {
+          const repairPrompt = await loadPrompt("repair", itContext.topicId, itContext.specializationId);
+          const repairText = renderPrompt(repairPrompt.user_prompt_template, {
+            schema: JSON.stringify(sectionPrompt.output_schema),
+            invalid_output: llm.raw,
+          });
+          llm = await invokeAndLog(analysisId, chunk.id, "repair", repairPrompt, repairText, chunk.retry_count + 2);
+          value = assertResult(llm.value);
+        }
+        await db.from("analysis_chunks").update({ status: "complete", generated_content: value, retry_count: chunk.retry_count + 1 }).eq("id", chunk.id);
+        completed.push({ chunk, value });
+      } catch (error) {
+        await db.from("analysis_chunks").update({ status: "failed", error_message: error instanceof Error ? error.message : "LLM error", retry_count: chunk.retry_count + 1 }).eq("id", chunk.id);
+        throw error;
+      }
+    }
+    const resultJson = {
+      title: claimed.title,
+      summary: completed.map(item => item.value.summary).filter(Boolean).join(" "),
+      sections: flattenSections(completed),
+      metadata: {
+        topicId: itContext.topicId,
+        specializationId: itContext.specializationId,
+        sourceCount: inputRows.length,
+        chunkCount: completed.length,
+        generatedAt: new Date().toISOString(),
+      },
+    };
+    assertResult(resultJson);
+    const { data: previous } = await db.from("analysis_results").select("version").eq("analysis_id", analysisId).order("version", { ascending: false }).limit(1).maybeSingle();
+    await db.from("analysis_results").update({ is_current: false }).eq("analysis_id", analysisId).eq("is_current", true);
+    const { data: resultRow, error: resultError } = await db.from("analysis_results").insert({
+      analysis_id: analysisId, version: (previous?.version ?? 0) + 1,
+      schema_version: "1.0", result_json: resultJson, summary: resultJson.summary,
+      source_metadata: resultJson.metadata, is_current: true,
+    }).select().single();
+    if (resultError) throw new ApiError(500, "RESULT_SAVE_FAILED", "Không lưu được kết quả phân tích.", resultError.message);
+    await persistAssets(analysisId, resultRow.id, resultJson.sections);
+    if (claimed.quiz_enabled) await generateQuiz(analysisId, resultRow.id, itContext.topicId, itContext.specializationId, completed);
+    const { error: finishError } = await db.from("analyses").update({
+      status: "completed", completed_at: new Date().toISOString(), error_code: null, error_message: null,
+      model_provider: process.env.LLM_PROVIDER ?? "mock", model_name: process.env.GEMINI_MODEL ?? "documind-deterministic",
+    }).eq("id", analysisId);
+    if (finishError) throw new ApiError(500, "ANALYSIS_FINISH_FAILED", "Không cập nhật được trạng thái hoàn tất.");
+    return { analysisId, result: resultJson, quizEnabled: Boolean(claimed.quiz_enabled) };
+  } catch (error) {
+    const errorCode = error instanceof ApiError ? error.code : "PROCESSING_FAILED";
+    await db.from("analyses").update({ status: "failed", error_code: errorCode, error_message: error instanceof Error ? error.message : String(error) }).eq("id", analysisId);
+    throw error;
+  }
+}
+
+async function generateQuiz(
+  analysisId: string, resultId: string, topicId: string | null,
+  specializationId: string | null, completed: Array<{ chunk: ChunkRow; value: ReturnType<typeof assertResult> }>,
+) {
+  const db = getAdminDb();
+  const prompt = await loadPrompt("quiz_generation", topicId, specializationId);
+  const candidates: Array<{ prompt: string; options: string[]; answerIndex: number; explanation: string; difficulty?: "easy" | "medium" | "hard"; chunkId: string }> = [];
+  for (const item of completed) {
+    const result = await invokeAndLog(
+      analysisId, item.chunk.id, "quiz_generation", prompt,
+      renderPrompt(prompt.user_prompt_template, { question_count: "2", content: item.chunk.content }),
+      1,
+    );
+    const qs = (result.value as { questions?: unknown[] })?.questions;
+    if (!Array.isArray(qs)) continue;
+    for (const candidate of qs) {
+      if (!candidate || typeof candidate !== "object") continue;
+      const q = candidate as Record<string, unknown>;
+      if (typeof q.prompt !== "string" || !Array.isArray(q.options) || !Number.isInteger(q.answerIndex)) continue;
+      if (Number(q.answerIndex) < 0 || Number(q.answerIndex) >= q.options.length) continue;
+      candidates.push({
+        prompt: q.prompt, options: q.options.filter((x): x is string => typeof x === "string"),
+        answerIndex: Number(q.answerIndex), explanation: String(q.explanation ?? ""), difficulty: q.difficulty as "easy" | "medium" | "hard" | undefined,
+        chunkId: item.chunk.id,
+      });
+    }
+  }
+  const unique = Array.from(new Map(candidates.map(q => [q.prompt.toLocaleLowerCase(), q])).values()).slice(0, 20);
+  if (!unique.length) return;
+  const { data: quiz, error } = await db.from("quizzes").insert({
+    analysis_id: analysisId, result_id: resultId, title: "Ôn tập nhanh",
+    settings: { questionCount: unique.length, source: "chunk_candidates_deduplicated" }, status: "ready",
+  }).select().single();
+  if (error || !quiz) throw new ApiError(500, "QUIZ_SAVE_FAILED", "Không lưu được quiz.", error?.message);
+  const { error: questionError } = await db.from("quiz_questions").insert(unique.map((q, question_index) => ({
+    quiz_id: quiz.id, question_index, question_type: "multiple_choice", prompt: q.prompt, options: q.options,
+    answer: { index: q.answerIndex }, explanation: q.explanation, difficulty: q.difficulty ?? "medium", source_chunk_id: q.chunkId,
+  })));
+  if (questionError) throw new ApiError(500, "QUIZ_QUESTIONS_SAVE_FAILED", "Không lưu được câu hỏi quiz.", questionError.message);
+}
+
+async function persistAssets(
+  analysisId: string, resultId: string,
+  sections: Array<{ blocks: Array<{ type: string; content: unknown }> }>,
+) {
+  const assets: Array<Record<string, unknown>> = [];
+  for (const section of sections) for (const block of section.blocks) {
+    if (typeof block.content !== "string") continue;
+    const source = block.content;
+    const matches = [...source.matchAll(/```(mermaid|plantuml|latex|tex)(?:\n)([\s\S]*?)```/gi)];
+    for (const match of matches) {
+      const language = match[1].toLowerCase();
+      assets.push({
+        analysis_id: analysisId, result_id: resultId,
+        asset_type: language === "tex" ? "latex" : language,
+        title: "Được tạo từ nội dung phân tích", source: match[2].trim(),
+      });
+    }
+  }
+  if (assets.length) await getAdminDb().from("generated_assets").insert(assets);
+}
