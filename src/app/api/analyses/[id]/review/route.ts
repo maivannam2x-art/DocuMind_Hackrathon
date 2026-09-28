@@ -32,10 +32,16 @@ export async function PATCH(request: NextRequest, context: Context) {
     if (body.promptTemplateId !== undefined) updates.prompt_template_id = body.promptTemplateId;
     if (body.quizEnabled !== undefined) updates.quiz_enabled = body.quizEnabled;
     if (body.topicCode !== undefined) {
-      if (body.topicCode.toUpperCase() !== "IT") throw new ApiError(400, "IT_SCOPE_ONLY", "DocuMind hiện chỉ hỗ trợ tài liệu Công nghệ thông tin.");
-      const { data: topic, error } = await db.from("topics").select("id").eq("code", "IT").eq("is_active", true).maybeSingle();
-      if (error || !topic) throw new ApiError(500, "IT_TOPIC_NOT_CONFIGURED", "Chưa cấu hình chủ đề Công nghệ thông tin.");
-      updates.topic_id = topic.id;
+      const topicCode = body.topicCode.toUpperCase();
+      if (!["IT", "AUTO", "GENERAL"].includes(topicCode)) throw new ApiError(400, "UNSUPPORTED_TOPIC", "Hiện có thể chọn IT hoặc dùng prompt chung.");
+      if (topicCode === "GENERAL") {
+        updates.topic_id = null;
+        updates.specialization_id = null;
+      } else if (topicCode === "IT") {
+        const { data: topic, error } = await db.from("topics").select("id").eq("code", "IT").eq("is_active", true).maybeSingle();
+        if (error || !topic) throw new ApiError(500, "IT_TOPIC_NOT_CONFIGURED", "Chưa cấu hình chủ đề Công nghệ thông tin.");
+        updates.topic_id = topic.id;
+      }
     }
     const topicId = String(updates.topic_id ?? analysis.topic_id ?? "");
     if (body.specializationId) {
@@ -43,8 +49,9 @@ export async function PATCH(request: NextRequest, context: Context) {
       if (error || !specialization) throw new ApiError(400, "INVALID_IT_SPECIALIZATION", "Chuyên ngành không thuộc danh mục IT.");
     }
     if (body.promptTemplateId) {
-      const { data: selectedPrompt, error } = await db.from("prompt_templates").select("id")
-        .eq("id", body.promptTemplateId).eq("purpose", "section_generation").eq("topic_id", topicId).eq("is_active", true).maybeSingle();
+      const promptQuery = db.from("prompt_templates").select("id")
+        .eq("id", body.promptTemplateId).eq("purpose", "section_generation").eq("is_active", true);
+      const { data: selectedPrompt, error } = topicId ? await promptQuery.or(`topic_id.is.null,topic_id.eq.${topicId}`).maybeSingle() : await promptQuery.is("topic_id", null).maybeSingle();
       if (error || !selectedPrompt) throw new ApiError(400, "INVALID_PROMPT_TEMPLATE", "Prompt đã chọn không phải mẫu phân tích IT đang hoạt động.");
     }
     if (Object.keys(updates).length) await db.from("analyses").update(updates).eq("id", id);

@@ -71,40 +71,44 @@ function flattenSections(parts: Array<{ chunk: ChunkRow; value: ReturnType<typeo
 async function resolveITSpecialization(analysis: Record<string, unknown>, sourceText: string) {
   const db = getAdminDb();
   const { data: itTopic, error: topicError } = await db.from("topics").select("id").eq("code", "IT").eq("is_active", true).maybeSingle();
-  if (topicError || !itTopic) throw new ApiError(500, "IT_TOPIC_NOT_CONFIGURED", "Chưa cấu hình chủ đề Công nghệ thông tin.");
-  const topicId = itTopic.id as string;
-  if (analysis.specialization_id) {
+  if (topicError) throw new ApiError(500, "DATABASE_ERROR", "Không tải được danh mục chủ đề.", topicError.message);
+  const topicId = itTopic?.id as string | undefined;
+  if (analysis.specialization_id && topicId) {
     const { data: specialization } = await db.from("topic_specializations").select("id,name,slug")
       .eq("id", analysis.specialization_id).eq("topic_id", topicId).maybeSingle();
-    if (specialization) return { topicId, specializationId: specialization.id as string, specializationName: specialization.name as string };
+    if (specialization) return { topicId, topicName: "Công nghệ thông tin", specializationId: specialization.id as string, specializationName: specialization.name as string };
   }
   const prompt = await loadPrompt("topic_detection");
   const userPrompt = renderPrompt(prompt.user_prompt_template, {
     topic: "Công nghệ thông tin", content: sourceText.slice(0, 5000),
   });
   const result = await invokeAndLog(analysis.id as string, null, "topic_detection", prompt, userPrompt, 1);
-  const suggestedSlug = typeof result.value === "object" && result.value && "specializationSlug" in result.value
-    ? String((result.value as { specializationSlug: string }).specializationSlug) : "it-fundamentals";
-  const { data: detected } = await db.from("topic_specializations").select("id,name,slug")
-    .eq("topic_id", topicId).eq("slug", suggestedSlug).eq("is_active", true).maybeSingle();
-  const { data: fallback } = detected ? { data: null } : await db.from("topic_specializations").select("id,name,slug")
-    .eq("topic_id", topicId).eq("slug", "it-fundamentals").eq("is_active", true).maybeSingle();
+  const detection = result.value && typeof result.value === "object" ? result.value as Record<string, unknown> : {};
+  const isIT = detection.isIT === true;
+  const suggestedSlug = typeof detection.specializationSlug === "string" ? detection.specializationSlug : null;
+  if (isIT && !topicId) throw new ApiError(500, "IT_TOPIC_NOT_CONFIGURED", "Chưa cấu hình chủ đề Công nghệ thông tin.");
+  const { data: detected } = isIT && suggestedSlug ? await db.from("topic_specializations").select("id,name,slug")
+    .eq("topic_id", topicId).eq("slug", suggestedSlug).eq("is_active", true).maybeSingle() : { data: null };
+  const { data: fallback } = isIT && !detected ? await db.from("topic_specializations").select("id,name,slug")
+    .eq("topic_id", topicId).eq("slug", "it-fundamentals").eq("is_active", true).maybeSingle() : { data: null };
   const specialization = detected ?? fallback;
   const specializationId = specialization?.id as string | undefined;
+  const topicName = isIT ? "Công nghệ thông tin" : typeof detection.detectedTopic === "string" && detection.detectedTopic.trim() ? detection.detectedTopic : "Chủ đề chưa xác định";
   await db.from("analyses").update({
-    topic_id: topicId, specialization_id: specializationId ?? null,
+    topic_id: isIT ? topicId : null, specialization_id: isIT ? specializationId ?? null : null,
     model_provider: result.provider, model_name: result.model,
   }).eq("id", analysis.id);
   return {
-    topicId,
-    specializationId: specializationId ?? null,
-    specializationName: (specialization?.name as string | undefined) ?? "Công nghệ thông tin",
+    topicId: isIT ? topicId! : null,
+    topicName,
+    specializationId: isIT ? specializationId ?? null : null,
+    specializationName: isIT ? (specialization?.name as string | undefined) ?? "Nền tảng công nghệ thông tin" : topicName,
   };
 }
 
-async function loadSectionPrompt(analysis: Record<string, unknown>, topicId: string, specializationId: string | null) {
+async function loadSectionPrompt(analysis: Record<string, unknown>, topicId: string | null, specializationId: string | null) {
   const db = getAdminDb();
-  if (analysis.prompt_template_id) {
+  if (analysis.prompt_template_id && topicId) {
     const { data: selected } = await db.from("prompt_templates").select("*")
       .eq("id", analysis.prompt_template_id).eq("purpose", "section_generation")
       .eq("topic_id", topicId).eq("is_active", true).maybeSingle();
@@ -172,6 +176,8 @@ export async function runAnalysis(identity: RequestIdentity, analysisId: string)
       sections: flattenSections(completed),
       metadata: {
         topicId: itContext.topicId,
+        topicName: itContext.topicName,
+        promptScope: itContext.topicId ? "it_specialized" : "general_fallback",
         specializationId: itContext.specializationId,
         sourceCount: inputRows.length,
         chunkCount: completed.length,

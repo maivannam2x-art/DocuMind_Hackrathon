@@ -24,6 +24,15 @@ describe("LLM provider adapter", () => {
       purpose: "topic_detection", system: "test",
       prompt: "Nội dung: PostgreSQL database và SQL query",
     });
-    expect(response.value).toMatchObject({ specializationSlug: "databases" });
+    expect(response.value).toMatchObject({ isIT: true, specializationSlug: "databases" });
+  });
+
+  it("routes an unrelated or unclear subject to the general prompt scope", async () => {
+    process.env.LLM_PROVIDER = "mock";
+    const response = await generateLlm({
+      purpose: "topic_detection", system: "test",
+      prompt: "Nội dung: Tác phẩm văn học kể về hành trình trưởng thành của nhân vật chính.",
+    });
+    expect(response.value).toMatchObject({ isIT: false, specializationSlug: null });
   });
 });

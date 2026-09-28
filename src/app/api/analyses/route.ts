@@ -34,23 +34,27 @@ export async function POST(request: NextRequest) {
     if (!body.text?.trim() && files.length === 0) throw new ApiError(400, "INPUT_REQUIRED", "Dán nội dung hoặc tải lên ít nhất một tệp.");
     if (files.length > 10) throw new ApiError(413, "TOO_MANY_FILES", "Mỗi phân tích hỗ trợ tối đa 10 tệp.");
     const title = body.title?.trim() || "Phân tích mới";
-    const topicCode = body.topicCode?.toUpperCase() ?? "IT";
-    if (topicCode !== "IT") throw new ApiError(400, "IT_SCOPE_ONLY", "DocuMind hiện chỉ hỗ trợ tài liệu Công nghệ thông tin.");
-    const { data: topic, error: topicError } = await db.from("topics").select("id").eq("code", "IT").eq("is_active", true).maybeSingle();
-    if (topicError || !topic) throw new ApiError(500, "IT_TOPIC_NOT_CONFIGURED", "Chưa cấu hình chủ đề Công nghệ thông tin.", topicError?.message);
-    const topicId = topic.id as string;
+    const topicCode = body.topicCode?.toUpperCase() ?? (body.specializationId ? "IT" : undefined);
+    if (topicCode && !["IT", "AUTO", "GENERAL"].includes(topicCode)) throw new ApiError(400, "UNSUPPORTED_TOPIC", "Hiện có thể chọn IT hoặc để hệ thống tự nhận diện chủ đề.");
+    const { data: topic, error: topicError } = topicCode === "IT"
+      ? await db.from("topics").select("id").eq("code", "IT").eq("is_active", true).maybeSingle()
+      : { data: null, error: null };
+    if (topicError || (topicCode === "IT" && !topic)) throw new ApiError(500, "IT_TOPIC_NOT_CONFIGURED", "Chưa cấu hình chủ đề Công nghệ thông tin.", topicError?.message);
+    const topicId = topic?.id as string | undefined;
     if (body.specializationId) {
+      if (!topicId) throw new ApiError(400, "IT_TOPIC_REQUIRED", "Chọn chủ đề IT trước khi chọn chuyên ngành.");
       const { data: specialization, error } = await db.from("topic_specializations").select("id").eq("id", body.specializationId).eq("topic_id", topicId).eq("is_active", true).maybeSingle();
       if (error || !specialization) throw new ApiError(400, "INVALID_IT_SPECIALIZATION", "Chuyên ngành không thuộc danh mục IT.");
     }
     if (body.promptTemplateId) {
-      const { data: selectedPrompt, error } = await db.from("prompt_templates").select("id")
-        .eq("id", body.promptTemplateId).eq("purpose", "section_generation").eq("topic_id", topicId).eq("is_active", true).maybeSingle();
+      const promptQuery = db.from("prompt_templates").select("id")
+        .eq("id", body.promptTemplateId).eq("purpose", "section_generation").eq("is_active", true);
+      const { data: selectedPrompt, error } = topicId ? await promptQuery.eq("topic_id", topicId).maybeSingle() : await promptQuery.is("topic_id", null).maybeSingle();
       if (error || !selectedPrompt) throw new ApiError(400, "INVALID_PROMPT_TEMPLATE", "Prompt đã chọn không phải mẫu phân tích IT đang hoạt động.");
     }
     const ttl = envInt("GUEST_SESSION_TTL_HOURS", 24);
     const { data: analysis, error: createError } = await db.from("analyses").insert({
-      ...ownerFilter(identity), title, topic_id: topicId, specialization_id: body.specializationId ?? null,
+      ...ownerFilter(identity), title, topic_id: topicId ?? null, specialization_id: body.specializationId ?? null,
       prompt_template_id: body.promptTemplateId ?? null, custom_prompt: body.customPrompt ?? null,
       quiz_enabled: body.quizEnabled ?? false, status: "draft",
       expires_at: identity.userId ? null : new Date(Date.now() + ttl * 60 * 60 * 1000).toISOString(),

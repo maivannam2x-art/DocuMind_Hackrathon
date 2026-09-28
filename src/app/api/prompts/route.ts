@@ -12,7 +12,10 @@ export async function GET(request: NextRequest) {
     if (specializationId) query = query.or(`specialization_id.is.null,specialization_id.eq.${specializationId}`);
     const { data, error } = await query;
     if (error) throw new ApiError(500, "DATABASE_ERROR", "Không tải được danh sách prompt IT.", error.message);
-    return ok({ items: data ?? [] });
+    return ok({ items: (data ?? []).map((item: Record<string, unknown>) => ({
+      ...item,
+      scope: item.topic_id ? "it" : "general_fallback",
+      description: item.topic_id ? "Prompt chuyên sâu cho tài liệu IT." : "Prompt dự phòng cho tài liệu ngoài IT hoặc chưa xác định được chủ đề; kết quả sẽ ít chuyên sâu hơn.",
+    })) });
   } catch (error) { return errorResponse(error); }
 }
-

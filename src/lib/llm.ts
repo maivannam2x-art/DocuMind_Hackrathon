@@ -68,7 +68,7 @@ function mockResponse(request: LlmRequest): unknown {
       ["databases", /\b(sql|database|databases|postgres|mysql|mongodb|cơ sở dữ liệu|truy vấn|index|transaction)\b/i],
       ["cybersecurity", /\b(cybersecurity|security|owasp|encryption|authentication|authorization|bảo mật|an ninh mạng|mật mã)\b/i],
       ["cloud-devops", /\b(cloud|devops|docker|kubernetes|ci\/cd|deployment|hạ tầng|container)\b/i],
-      ["computer-networks", /\b(network|tcp|ip|http|dns|routing|mạng máy tính|giao thức)\b/i],
+      ["computer-networks", /\b(computer network|tcp\/ip|tcp|http|dns|routing|mạng máy tính|giao thức mạng)\b/i],
       ["artificial-intelligence", /\b(ai|machine learning|deep learning|llm|neural network|trí tuệ nhân tạo|học máy)\b/i],
       ["data-structures-algorithms", /\b(algorithm|data structure|big o|độ phức tạp|giải thuật|cấu trúc dữ liệu)\b/i],
       ["software-testing", /\b(unit test|integration test|testing|test case|kiểm thử|kiểm tra phần mềm)\b/i],
@@ -76,8 +76,9 @@ function mockResponse(request: LlmRequest): unknown {
       ["programming-languages", /\b(python|javascript|typescript|java|c\+\+|golang|rust|lập trình|source code|mã nguồn)\b/i],
       ["web-development", /\b(frontend|backend|web development|react|next\.js|html|css|rest api|phát triển web)\b/i],
     ];
-    const specializationSlug = candidates.find(([, pattern]) => pattern.test(text))?.[0] ?? "it-fundamentals";
-    return { specializationSlug, confidence: specializationSlug === "it-fundamentals" ? 0.35 : 0.86, reason: "Chọn chuyên ngành IT mô phỏng dựa trên thuật ngữ trong tài liệu." };
+    const detected = candidates.find(([, pattern]) => pattern.test(text));
+    if (!detected) return { isIT: false, specializationSlug: null, detectedTopic: "Chủ đề chưa xác định hoặc ngoài IT", confidence: 0.35, reason: "Không tìm thấy đủ thuật ngữ đặc trưng để gán chuyên ngành IT; dùng prompt chung." };
+    return { isIT: true, specializationSlug: detected[0], detectedTopic: "Công nghệ thông tin", confidence: 0.86, reason: "Tìm thấy thuật ngữ kỹ thuật IT trong tài liệu." };
   }
   if (request.purpose === "chat") {
     const question = prompt.match(/Câu hỏi:\s*([\s\S]+)$/)?.[1]?.trim() ?? "câu hỏi của bạn";

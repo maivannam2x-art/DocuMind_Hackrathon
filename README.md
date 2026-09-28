@@ -29,6 +29,8 @@ An analysis is not sent to an LLM before confirmation. Each chunk is persisted, 
 
 Guest requests receive an HttpOnly dm_guest cookie. Guest data stops being accessible at its expiry time; the scheduled cleanup then removes expired rows and stored files. Configure CRON_SECRET in the hosting environment for cleanup. Authenticated history is scoped by Supabase Auth user ID. Public clients cannot modify analysis state or read quiz answers directly.
 
+After confirmation, topic routing uses specialized IT prompts when the source supports an IT classification. Documents outside IT or without enough evidence use global fallback prompts for analysis, quizzes, chat, and JSON repair. These prompts stay grounded in the source and avoid claiming the same depth as IT-specific prompts. Results record `metadata.promptScope` as `it_specialized` or `general_fallback` and include the detected topic label.
+
 ## Request example
 
 Create a guest analysis with pasted text:
@@ -43,7 +45,7 @@ Keep the returned analysis ID, then send the same cookie jar through validate, r
 
 ## Data model
 
-The schema has 16 application tables. Inputs and chunks are separately stored for per-file review/retry; results use versioned JSON with dynamic sections and typed blocks. Quiz candidates are generated from chunks, deduplicated, and stored with answer keys that are available only to the server scoring route. Prompts are versioned for technical-document explanation, quiz generation, grounded follow-up chat, JSON repair and IT-specialization detection; programming, database and cybersecurity have tailored analysis prompts.
+The schema has 16 application tables. Inputs and chunks are separately stored for per-file review/retry; results use versioned JSON with dynamic sections and typed blocks. Quiz candidates are generated from chunks, deduplicated, and stored with answer keys that are available only to the server scoring route. Versioned prompts cover IT-specific work and a general fallback for documents outside IT or with an unclear topic; programming, database and cybersecurity have tailored analysis prompts.
 
 ## Tests
 

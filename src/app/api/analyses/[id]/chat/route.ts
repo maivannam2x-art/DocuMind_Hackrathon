@@ -46,7 +46,7 @@ export async function POST(request: NextRequest, context: Context) {
       ...(history ?? []).reverse().map((message: { role: string; content: string }) => `${message.role}: ${message.content}`),
     ].filter(Boolean).join("\n").slice(0, 12000);
     const userPrompt = prompt.user_prompt_template
-      .replace(/\{\{\s*topic\s*\}\}/g, "Công nghệ thông tin")
+      .replace(/\{\{\s*topic\s*\}\}/g, analysis.topic_id ? "Công nghệ thông tin" : "chủ đề chung hoặc chưa xác định")
       .replace(/\{\{\s*summary\s*\}\}/g, groundedContext)
       .replace(/\{\{\s*history\s*\}\}/g, (history ?? []).reverse().map((message: { role: string; content: string }) => `${message.role}: ${message.content}`).join("\n"))
       .replace(/\{\{\s*question\s*\}\}/g, body.message);
