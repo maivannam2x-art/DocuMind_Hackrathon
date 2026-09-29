@@ -66,7 +66,12 @@ export function ResultBlockView({ block, analysisId, resultId }: { block: Result
   const type = block.type.toLowerCase().replaceAll("-", "_");
   const contentType = block.contentType ?? (typeof block.metadata?.contentType === "string" ? block.metadata.contentType as ResultBlock["contentType"] : undefined);
   const source = typeof block.content === "string" ? block.content : scalarText(block.content);
-  const label = type.replaceAll("_", " ");
+  const labels: Record<string, string> = {
+    paragraph: "Nội dung", summary: "Tóm tắt", key_points: "Ý chính", list: "Danh sách",
+    workflow: "Quy trình", diagram: "Sơ đồ", mermaid: "Sơ đồ", formula: "Công thức",
+    table: "Bảng", code: "Mã nguồn", image: "Hình ảnh", conclusion: "Kết luận",
+  };
+  const label = labels[type] ?? type.replaceAll("_", " ");
 
   let body;
   if (contentType === "json" || type === "json") {

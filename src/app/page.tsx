@@ -459,7 +459,8 @@ export default function Home() {
   }
 
   const stepIndex = screen === "input" ? 0 : screen === "review" ? 1 : screen === "processing" ? 2 : 3;
-  const heading = screen === "input" ? "Biến tài liệu thành tri thức" : screen === "review" ? "Kiểm tra tài liệu trước khi xử lý" : screen === "processing" ? "Đang xây dựng workspace học tập" : screen === "history" ? "Lịch sử phân tích" : "Tổng quan tài liệu";
+  const resultHeadings: Record<string, string> = { overview: "Tổng quan tài liệu", summary: "Tóm tắt tài liệu", detail: "Phân tích chi tiết", conclusion: "Kết luận tổng hợp", quiz: "Quiz ôn tập", chat: "Hỏi đáp cùng AI", report: "Xuất báo cáo" };
+  const heading = screen === "input" ? "Biến tài liệu thành tri thức" : screen === "review" ? "Kiểm tra tài liệu trước khi xử lý" : screen === "processing" ? "Đang xây dựng workspace học tập" : screen === "history" ? "Lịch sử phân tích" : resultHeadings[activeResultTab] ?? resultHeadings.overview;
 
   return (
     <main className="app-shell">
@@ -469,7 +470,7 @@ export default function Home() {
         </a>
         <div className="side-label">KHÔNG GIAN LÀM VIỆC</div>
         <nav className="side-nav" aria-label="Điều hướng chính">
-          <button className={`nav-item ${screen !== "history" ? "active" : ""}`} onClick={() => { setScreen("input"); setError(""); }}><Icon>＋</Icon>Phân tích mới</button>
+          <button className={`nav-item ${screen !== "history" && screen !== "result" ? "active" : ""}`} onClick={() => { setScreen("input"); setError(""); }}><Icon>＋</Icon>Phân tích mới</button>
           {screen === "result" && <div className="nav-submenu">
             <button className={activeResultTab === "overview" ? "selected" : ""} onClick={() => setActiveResultTab("overview")}>Tổng quan</button>
             <button className={activeResultTab === "summary" ? "selected" : ""} onClick={() => setActiveResultTab("summary")}>Tóm tắt</button>
@@ -595,7 +596,7 @@ export default function Home() {
 
             </div>
             {!(["chat", "report"].includes(activeResultTab)) && <aside className="result-aside">
-              <section className="panel topic-card"><div className="topic-card-top"><span>✦</span><small>CHỦ ĐỀ NHẬN DIỆN</small></div><h3>{String(result.metadata?.topicName ?? (analysis?.topic_id ? "Công nghệ thông tin" : "Chủ đề chung"))}</h3><p>{result.metadata?.promptScope === "general_fallback" ? "Dùng prompt chung · kết quả ít chuyên sâu hơn phân tích IT." : result.metadata?.promptScope === "it_specialized" ? "Đang dùng prompt chuyên sâu cho tài liệu IT." : "Phân tích bám sát tài liệu nguồn."}</p><div className="topic-badge">{String(result.metadata?.promptScope ?? "Tài liệu đã phân tích")}</div></section>
+              <section className="panel topic-card"><div className="topic-card-top"><span>✦</span><small>CHỦ ĐỀ NHẬN DIỆN</small></div><h3>{String(result.metadata?.topicName ?? (analysis?.topic_id ? "Công nghệ thông tin" : "Chủ đề chung"))}</h3><p>{result.metadata?.promptScope === "general_fallback" ? "Dùng prompt chung · kết quả ít chuyên sâu hơn phân tích IT." : result.metadata?.promptScope === "it_specialized" ? "Đang dùng prompt chuyên sâu cho tài liệu IT." : "Phân tích bám sát tài liệu nguồn."}</p><div className="topic-badge">{result.metadata?.promptScope === "general_fallback" ? "Chủ đề chung" : result.metadata?.promptScope === "it_specialized" ? "Chuyên sâu IT" : "Đã phân tích"}</div></section>
               <section className="panel chat-quick"><div className="chat-heading"><span className="chat-spark">✦</span><div><h3>Hỏi đáp cùng AI</h3><small>Dựa trên tài liệu đã phân tích</small></div></div>{chatLoadError ? <div className="inline-error">{chatLoadError}<button onClick={() => void reloadChat()}>Thử lại</button></div> : <p>Đặt câu hỏi để làm rõ khái niệm hoặc tìm ý trong tài liệu.</p>}<button className="button button-secondary" onClick={() => setActiveResultTab("chat")}>Mở chatbot →</button></section>
             </aside>}
           </div>}
