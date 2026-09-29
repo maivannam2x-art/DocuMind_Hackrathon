@@ -13,8 +13,8 @@ export async function GET(request: NextRequest, context: Context) {
     const db = getAdminDb();
     const includeContent = new URL(request.url).searchParams.get("includeContent") === "true";
     const inputColumns = includeContent
-      ? "id,input_kind,original_name,mime_type,byte_size,status,validation_report,position,original_text,normalized_text,edited_text,storage_path,storage_bucket"
-      : "id,input_kind,original_name,mime_type,byte_size,status,validation_report,position";
+      ? "id,input_kind,original_name,mime_type,byte_size,status,metadata,validation_report,position,original_text,normalized_text,edited_text,storage_path,storage_bucket"
+      : "id,input_kind,original_name,mime_type,byte_size,status,metadata,validation_report,position";
     const [{ data: inputs }, { data: chunks }, { data: result }, { data: quizzes }] = await Promise.all([
       db.from("analysis_inputs").select(inputColumns).eq("analysis_id", id).order("position"),
       db.from("analysis_chunks").select("id,input_id,chunk_index,title,content,status,error_message").eq("analysis_id", id).order("chunk_index"),
