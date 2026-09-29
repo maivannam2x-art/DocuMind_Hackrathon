@@ -24,11 +24,13 @@ type SignedUpload = { inputId: string; name: string; signedUrl: string; mimeType
 
 const steps = ["Tài liệu", "Kiểm tra", "Xử lý", "Kết quả"];
 const GUEST_ANALYSIS_STORAGE_KEY = "documind:guest-analysis-ids";
+const guestAnalysisIds = new Set<string>();
 
 function hasGuestAnalysisContext(path: string) {
   if (typeof window === "undefined") return false;
   const id = path.match(/^\/api\/analyses\/([^/?]+)/)?.[1];
   if (!id) return false;
+  if (guestAnalysisIds.has(id)) return true;
   try {
     const ids = JSON.parse(window.sessionStorage.getItem(GUEST_ANALYSIS_STORAGE_KEY) ?? "[]") as unknown;
     return Array.isArray(ids) && ids.includes(id);
@@ -36,6 +38,7 @@ function hasGuestAnalysisContext(path: string) {
 }
 
 function rememberGuestAnalysis(id: string) {
+  guestAnalysisIds.add(id);
   try {
     const ids = JSON.parse(window.sessionStorage.getItem(GUEST_ANALYSIS_STORAGE_KEY) ?? "[]") as unknown;
     const next = Array.isArray(ids) ? ids.filter((value): value is string => typeof value === "string") : [];
@@ -106,6 +109,7 @@ export default function Home() {
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
   const [authUser, setAuthUser] = useState<User | null>(null);
+  const [accountDisplayName, setAccountDisplayName] = useState("");
   const [authReady, setAuthReady] = useState(false);
   const [authMode, setAuthMode] = useState<"sign-in" | "sign-up" | "profile" | null>(null);
 
@@ -128,8 +132,14 @@ export default function Home() {
     let active = true;
     const { data: { subscription } } = client.auth.onAuthStateChange((event, session) => {
       setAuthUser(session?.user ?? null);
+      if (session && event === "SIGNED_IN") {
+        window.setTimeout(() => {
+          void api<{ email: string; displayName: string }>("/api/profile").then(profile => setAccountDisplayName(profile.displayName)).catch(() => undefined);
+        }, 0);
+      }
       setAuthReady(true);
       if (event === "SIGNED_OUT") {
+        setAccountDisplayName("");
         setAnalysisId(null); setAnalysis(null); setResultId(null); setResult(null); setHistory([]);
         setScreen("input"); setActiveResultTab("overview"); setQuizQuestions([]); setChat([]);
         setToast("Đã đăng xuất. Phiên học riêng của tài khoản đã được đóng.");
@@ -139,6 +149,11 @@ export default function Home() {
       if (!active) return;
       setAuthUser(data.session?.user ?? null);
       setAuthReady(true);
+      if (data.session) {
+        void api<{ email: string; displayName: string }>("/api/profile").then(profile => {
+          if (active) setAccountDisplayName(profile.displayName);
+        }).catch(() => undefined);
+      } else setAccountDisplayName("");
       if (sessionError) setToast("Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại để mở lịch sử.");
     });
     return () => { active = false; subscription.unsubscribe(); };
@@ -154,9 +169,8 @@ export default function Home() {
     }
   }
 
-  const accountName = typeof authUser?.user_metadata?.display_name === "string" && authUser.user_metadata.display_name.trim()
-    ? authUser.user_metadata.display_name.trim()
-    : authUser?.email ?? "Tài khoản DocuMind";
+  const metadataName = typeof authUser?.user_metadata?.display_name === "string" ? authUser.user_metadata.display_name.trim() : "";
+  const accountName = accountDisplayName || metadataName || authUser?.email || "Tài khoản DocuMind";
   const accountInitial = accountName.trim().charAt(0).toUpperCase() || "D";
 
   const loadResult = useCallback(async (id: string, analysisData?: Analysis) => {
@@ -569,7 +583,7 @@ export default function Home() {
         </div>
         <footer className="app-footer"><span>© 2026 DocuMind</span><span><i />Hệ thống học tập từ tài liệu</span><button onClick={() => setToast("Tài liệu chỉ được phân tích sau khi bạn xác nhận.")}>Quyền riêng tư</button></footer>
       </section>
-      {authMode && <AuthDialog key={authMode} initialMode={authMode} email={authUser?.email ?? undefined} onClose={() => setAuthMode(null)} onAuthenticated={() => setToast(authMode === "profile" ? "Hồ sơ đã cập nhật." : "Bạn đã đăng nhập vào DocuMind.")} />}
+      {authMode && <AuthDialog key={authMode} initialMode={authMode} email={authUser?.email ?? undefined} onClose={() => setAuthMode(null)} onAuthenticated={profile => { if (profile?.displayName) setAccountDisplayName(profile.displayName); setToast(authMode === "profile" ? "Hồ sơ đã cập nhật." : "Bạn đã đăng nhập vào DocuMind."); }} />}
     </main>
   );
 }

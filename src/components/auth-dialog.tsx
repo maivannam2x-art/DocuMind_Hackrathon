@@ -34,7 +34,7 @@ export function AuthDialog({ initialMode, email, onClose, onAuthenticated }: {
   initialMode: AuthMode;
   email?: string;
   onClose: () => void;
-  onAuthenticated: () => void;
+  onAuthenticated: (profile?: Pick<Profile, "displayName">) => void;
 }) {
   const [mode, setMode] = useState<AuthMode>(initialMode);
   const [displayName, setDisplayName] = useState("");
@@ -131,7 +131,7 @@ export function AuthDialog({ initialMode, email, onClose, onAuthenticated }: {
           setUsername(profile.username);
         }
         setMessage("Đã lưu hồ sơ của bạn.");
-        onAuthenticated();
+        onAuthenticated({ displayName: profile?.displayName ?? displayName.trim() });
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Không thể hoàn tất yêu cầu.");
@@ -179,4 +179,3 @@ export function AuthDialog({ initialMode, email, onClose, onAuthenticated }: {
     </section>
   </div>;
 }
-
