@@ -9,14 +9,35 @@ const MIME_BY_EXT: Record<string, string> = {
   pdf: "application/pdf",
   docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   txt: "text/plain",
+  md: "text/markdown",
+  markdown: "text/markdown",
+  json: "application/json",
+  js: "text/javascript",
+  jsx: "text/javascript",
+  ts: "text/typescript",
+  tsx: "text/typescript",
+  py: "text/x-python",
+  java: "text/x-java-source",
+  sql: "application/sql",
+  html: "text/html",
+  css: "text/css",
+  xml: "application/xml",
+  yaml: "application/yaml",
+  yml: "application/yaml",
+  sh: "application/x-sh",
+  go: "text/x-go",
+  rs: "text/x-rust",
+  c: "text/x-c",
+  cpp: "text/x-c++",
+  h: "text/x-c",
 };
 
 export async function extractFile(file: File): Promise<ExtractedFile> {
   const name = file.name || "document";
   const extension = name.split(".").pop()?.toLowerCase() ?? "";
   const expectedMime = MIME_BY_EXT[extension];
-  if (!expectedMime || !["pdf", "docx", "txt"].includes(extension)) {
-    throw new ApiError(415, "UNSUPPORTED_FILE_TYPE", "Chỉ hỗ trợ PDF, DOCX và TXT ở phiên bản backend này.");
+  if (!expectedMime) {
+    throw new ApiError(415, "UNSUPPORTED_FILE_TYPE", "Chỉ hỗ trợ PDF, DOCX và các tệp văn bản như TXT, Markdown hoặc mã nguồn.");
   }
   const maxBytes = envInt("MAX_UPLOAD_MB", 20) * 1024 * 1024;
   if (file.size > maxBytes) throw new ApiError(413, "FILE_TOO_LARGE", `Mỗi tệp tối đa ${Math.floor(maxBytes / 1024 / 1024)} MB.`);
@@ -87,4 +108,3 @@ export function chunkText(text: string): TextChunk[] {
   }
   return result;
 }
-

@@ -22,7 +22,7 @@ export async function PATCH(request: NextRequest, context: Context) {
     const identity = await getIdentity(request);
     const { id } = await context.params;
     const analysis = await getAnalysis(identity, id);
-    if (analysis.status !== "needs_review") throw new ApiError(409, "REVIEW_NOT_AVAILABLE", "Phân tích chưa ở bước kiểm tra và chỉnh sửa.");
+    if (!["draft", "needs_review"].includes(analysis.status)) throw new ApiError(409, "REVIEW_NOT_AVAILABLE", "Phân tích chưa ở bước kiểm tra và chỉnh sửa.");
     const body = safeBody(reviewSchema, await request.json());
     const db = getAdminDb();
     const updates: Record<string, unknown> = {};
