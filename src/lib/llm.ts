@@ -5,6 +5,24 @@ export type LlmPurpose = "section_generation" | "quiz_generation" | "chat" | "re
 export type LlmRequest = { purpose: LlmPurpose; system: string; prompt: string; schema?: unknown };
 export type LlmResult = { value: unknown; raw: string; provider: string; model: string; inputTokens?: number; outputTokens?: number; latencyMs: number };
 
+function geminiSchema(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const schema = value as Record<string, unknown>;
+  const result: Record<string, unknown> = {};
+  if (typeof schema.type === "string") result.type = schema.type.toUpperCase();
+  if (typeof schema.description === "string") result.description = schema.description;
+  if (Array.isArray(schema.required)) result.required = schema.required;
+  if (Array.isArray(schema.enum)) result.enum = schema.enum;
+  if (schema.items) result.items = geminiSchema(schema.items);
+  if (schema.properties && typeof schema.properties === "object" && !Array.isArray(schema.properties)) {
+    result.properties = Object.fromEntries(Object.entries(schema.properties as Record<string, unknown>).flatMap(([key, child]) => {
+      const converted = geminiSchema(child);
+      return converted ? [[key, converted]] : [];
+    }));
+  }
+  return result.type ? result : undefined;
+}
+
 export async function loadPrompt(purpose: LlmPurpose, topicId?: string | null, specializationId?: string | null) {
   const { data, error } = await getAdminDb().from("prompt_templates").select("*")
     .eq("purpose", purpose).eq("is_active", true)
@@ -32,13 +50,19 @@ export async function generateLlm(request: LlmRequest): Promise<LlmResult> {
   if (provider !== "gemini") throw new ApiError(500, "UNSUPPORTED_LLM_PROVIDER", "LLM_PROVIDER chỉ nhận mock hoặc gemini.");
   const key = process.env.GEMINI_API_KEY;
   if (!key) throw new ApiError(503, "LLM_KEY_MISSING", "LLM_PROVIDER=gemini nhưng chưa điền GEMINI_API_KEY.");
+  // Section blocks intentionally accept text, tables, diagrams, formulas and
+  // explicitly tagged JSON. Gemini's constrained JSON schema cannot express that
+  // union reliably, so sections are validated and repaired by our server schema.
+  const responseSchema = request.purpose === "section_generation" || request.purpose === "repair"
+    ? undefined
+    : geminiSchema(request.schema);
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: request.system }] },
       contents: [{ role: "user", parts: [{ text: request.prompt }] }],
-      generationConfig: { responseMimeType: "application/json", temperature: 0.2 },
+      generationConfig: { responseMimeType: "application/json", ...(responseSchema ? { responseSchema } : {}), temperature: 0.2 },
     }),
     signal: AbortSignal.timeout(90_000),
   });

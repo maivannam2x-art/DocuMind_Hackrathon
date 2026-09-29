@@ -24,7 +24,11 @@ export const resultSchema = z.object({
     blocks: z.array(z.object({
       type: z.string().min(1),
       content: z.unknown(),
+      contentType: z.enum(["text", "json", "latex", "mermaid", "plantuml", "table", "code"]).optional(),
       metadata: z.record(z.string(), z.unknown()).optional(),
+    }).superRefine((block, context) => {
+      const structured = block.content !== null && typeof block.content === "object" && !(Array.isArray(block.content) && ["list", "key_points"].includes(block.type));
+      if (structured && !block.contentType) context.addIssue({ code: "custom", path: ["contentType"], message: "Nội dung dạng object/array phải có contentType rõ ràng, ví dụ json, table hoặc mermaid." });
     })).min(1),
   })).min(1),
 }).passthrough();

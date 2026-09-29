@@ -15,7 +15,11 @@ Never expose SUPABASE_SERVICE_ROLE_KEY or GEMINI_API_KEY in client-side code.
 
 POST /api/analyses creates a guest or owned analysis. Submit text or multipart files, then POST /api/analyses/:id/validate; inspect and optionally edit the extracted source and outline with PATCH /api/analyses/:id/review; explicitly confirm with POST /api/analyses/:id/confirm; process with POST /api/analyses/:id/run; fetch status/result; then use quiz, chat and export endpoints.
 
-An analysis is not sent to an LLM before confirmation. Each chunk is persisted, generated output is parsed and schema-checked, and malformed model output gets one repair attempt. A failed chunk leaves an actionable error and can be retried via /run.
+An analysis is not sent to an LLM before confirmation. Each chunk is persisted, generated output is parsed and schema-checked, and malformed model output gets one repair attempt. Structured blocks use `contentType` (`json`, `table`, `latex`, `mermaid`, `plantuml`, or `code`) so the frontend can render data, formulas, diagrams, tables, and source without treating arbitrary objects as visible JSON. A failed chunk leaves an actionable error and can be retried via /run.
+
+When quiz generation returns an incomplete or differently wrapped response, the backend normalizes supported shapes and creates source-grounded true/false questions for any remaining slots. A temporary quiz LLM error does not silently result in a completed analysis with an empty quiz.
+
+The result workspace has separate overview, summary, detailed analysis, interactive quiz, contextual chat, and report export views. Reports can be downloaded as PDF, Word (`.docx`), Markdown, HTML, or JSON. JSON is an explicitly labelled machine-readable export; it is never rendered as ordinary prose.
 
 ## API routes
 
@@ -25,7 +29,7 @@ An analysis is not sent to an LLM before confirmation. Each chunk is persisted, 
 - GET /api/analyses/:id, POST /validate, PATCH /review, POST /confirm, POST /run, GET /result
 - GET /api/analyses/:id/quiz, POST /quiz/attempts
 - GET/POST /api/analyses/:id/chat
-- POST /api/analyses/:id/exports
+- POST /api/analyses/:id/exports (`pdf`, `docx`, `markdown`, `html`, `json`)
 
 Guest requests receive an HttpOnly dm_guest cookie. Guest data stops being accessible at its expiry time; the scheduled cleanup then removes expired rows and stored files. Configure CRON_SECRET in the hosting environment for cleanup. Authenticated history is scoped by Supabase Auth user ID. Public clients cannot modify analysis state or read quiz answers directly.
 

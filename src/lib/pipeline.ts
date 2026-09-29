@@ -4,8 +4,9 @@ import { getAdminDb } from "@/lib/db";
 import { ApiError } from "@/lib/http";
 import { assertResult } from "@/lib/validation";
 import { generateLlm, loadPrompt, type LlmPurpose, type LlmResult } from "@/lib/llm";
+import { createSourceGroundedFallback, normalizeQuizCandidates, type QuizCandidate } from "@/lib/quiz";
 
-type ChunkRow = { id: string; input_id: string; chunk_index: number; title: string | null; content: string; status: string; retry_count: number; generated_content?: unknown };
+export type ChunkRow = { id: string; input_id: string; chunk_index: number; title: string | null; content: string; status: string; retry_count: number; generated_content?: unknown };
 type PromptRow = { id: string; system_prompt: string; user_prompt_template: string; output_schema: unknown; model_config: Record<string, unknown> };
 
 function renderPrompt(template: string, values: Record<string, string>) {
@@ -210,53 +211,70 @@ export async function runAnalysis(identity: RequestIdentity, analysisId: string)
 
 async function generateQuiz(
   analysisId: string, resultId: string, topicId: string | null,
-  specializationId: string | null, completed: Array<{ chunk: ChunkRow; value: ReturnType<typeof assertResult> }>,
+  specializationId: string | null, completed: Array<{ chunk: ChunkRow }>,
 ) {
   const db = getAdminDb();
   const prompt = await loadPrompt("quiz_generation", topicId, specializationId);
-  const candidates: Array<{ prompt: string; options: string[]; answerIndex: number; explanation: string; difficulty?: "easy" | "medium" | "hard"; chunkId: string }> = [];
+  const candidates: QuizCandidate[] = [];
+  let usedFallback = false;
   for (const item of completed) {
-    const result = await invokeAndLog(
-      analysisId, item.chunk.id, "quiz_generation", prompt,
-      renderPrompt(prompt.user_prompt_template, { question_count: "2", content: item.chunk.content }),
-      1,
-    );
-    const qs = (result.value as { questions?: unknown[] })?.questions;
-    if (!Array.isArray(qs)) continue;
-    for (const candidate of qs) {
-      if (!candidate || typeof candidate !== "object") continue;
-      const q = candidate as Record<string, unknown>;
-      if (typeof q.prompt !== "string" || !Array.isArray(q.options) || !Number.isInteger(q.answerIndex)) continue;
-      if (Number(q.answerIndex) < 0 || Number(q.answerIndex) >= q.options.length) continue;
-      candidates.push({
-        prompt: q.prompt, options: q.options.filter((x): x is string => typeof x === "string"),
-        answerIndex: Number(q.answerIndex), explanation: String(q.explanation ?? ""), difficulty: q.difficulty as "easy" | "medium" | "hard" | undefined,
-        chunkId: item.chunk.id,
-      });
+    let generated: QuizCandidate[] = [];
+    try {
+      const response = await invokeAndLog(
+        analysisId, item.chunk.id, "quiz_generation", prompt,
+        renderPrompt(prompt.user_prompt_template, { question_count: "3", content: item.chunk.content }),
+        1,
+      );
+      generated = normalizeQuizCandidates(response.value, item.chunk.id);
+    } catch (error) {
+      // Quiz generation is an optional enrichment; a temporary quiz model error must
+      // not discard the completed analysis. A source-grounded fallback is added below.
+      console.warn("Quiz LLM generation failed; using source-grounded questions", error instanceof Error ? error.message : error);
     }
+    candidates.push(...generated);
+    const fallback = createSourceGroundedFallback(item.chunk.content, item.chunk.id, Math.max(0, 3 - generated.length));
+    if (fallback.length) usedFallback = true;
+    candidates.push(...fallback);
   }
   const unique = Array.from(new Map(candidates.map(q => [q.prompt.toLocaleLowerCase(), q])).values()).slice(0, 20);
   if (!unique.length) return;
   const { data: quiz, error } = await db.from("quizzes").insert({
     analysis_id: analysisId, result_id: resultId, title: "Ôn tập nhanh",
-    settings: { questionCount: unique.length, source: "chunk_candidates_deduplicated" }, status: "ready",
+    settings: { questionCount: unique.length, source: "chunk_candidates_deduplicated", usedSourceFallback: usedFallback }, status: "ready",
   }).select().single();
   if (error || !quiz) throw new ApiError(500, "QUIZ_SAVE_FAILED", "Không lưu được quiz.", error?.message);
   const { error: questionError } = await db.from("quiz_questions").insert(unique.map((q, question_index) => ({
-    quiz_id: quiz.id, question_index, question_type: "multiple_choice", prompt: q.prompt, options: q.options,
+    quiz_id: quiz.id, question_index, question_type: q.questionType, prompt: q.prompt, options: q.options,
     answer: { index: q.answerIndex }, explanation: q.explanation, difficulty: q.difficulty ?? "medium", source_chunk_id: q.chunkId,
   })));
   if (questionError) throw new ApiError(500, "QUIZ_QUESTIONS_SAVE_FAILED", "Không lưu được câu hỏi quiz.", questionError.message);
 }
 
+export async function createQuizForAnalysis(args: {
+  analysisId: string;
+  resultId: string;
+  topicId: string | null;
+  specializationId: string | null;
+  chunks: ChunkRow[];
+}) {
+  await generateQuiz(args.analysisId, args.resultId, args.topicId, args.specializationId, args.chunks.map(chunk => ({ chunk })));
+}
+
 async function persistAssets(
   analysisId: string, resultId: string,
-  sections: Array<{ blocks: Array<{ type: string; content: unknown }> }>,
+  sections: Array<{ blocks: Array<{ type: string; content: unknown; contentType?: string }> }>,
 ) {
   const assets: Array<Record<string, unknown>> = [];
   for (const section of sections) for (const block of section.blocks) {
     if (typeof block.content !== "string") continue;
     const source = block.content;
+    if (["mermaid", "plantuml", "latex"].includes(block.contentType ?? "")) {
+      assets.push({
+        analysis_id: analysisId, result_id: resultId,
+        asset_type: block.contentType, title: block.type || "Được tạo từ nội dung phân tích", source: source.trim(),
+      });
+      continue;
+    }
     const matches = [...source.matchAll(/```(mermaid|plantuml|latex|tex)(?:\n)([\s\S]*?)```/gi)];
     for (const match of matches) {
       const language = match[1].toLowerCase();

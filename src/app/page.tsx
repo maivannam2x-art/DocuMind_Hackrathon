@@ -1,6 +1,8 @@
 "use client";
 
 import { ChangeEvent, FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { ResultBlockView } from "@/components/result-block";
+import { blockToPlainText, type ResultBlock } from "@/lib/result-content";
 
 type Topic = { id: string; code: string; name: string; specializations: Array<{ id: string; name: string; parent_id: string | null; description?: string }> };
 type ApiInput = { id: string; original_name: string; edited_text?: string | null; normalized_text?: string | null; original_text?: string | null; status?: string };
@@ -9,11 +11,11 @@ type InputReport = { id: string; name: string; characters: number; words: number
 type ValidationReport = { valid: boolean; totalCharacters: number; totalWords: number; inputCount: number; chunkCount: number; blockingErrors: Array<{ message: string }>; warnings: Array<{ message: string }>; notes: Array<{ message: string }>; inputs: InputReport[] };
 type Analysis = { id: string; title: string; status: string; confirmed_at?: string | null; topic_id?: string | null; specialization_id?: string | null; custom_prompt?: string | null; quiz_enabled?: boolean; validation_report?: ValidationReport; created_at?: string; updated_at?: string; completed_at?: string | null; error_code?: string | null; error_message?: string | null };
 type HistoryRow = Pick<Analysis, "id" | "title" | "status" | "quiz_enabled" | "created_at" | "updated_at" | "completed_at" | "error_code">;
-type Block = { type: string; content: unknown; metadata?: Record<string, unknown> };
+type Block = ResultBlock;
 type Section = { title: string; summary?: string; blocks: Block[] };
 type ResultJson = { title?: string; summary?: string; sections: Section[]; metadata?: Record<string, unknown> };
 type ChatMessage = { id?: string; role: "user" | "assistant"; content: string; citations?: string[] };
-type QuizQuestion = { id: string; prompt: string; options: string[]; difficulty?: string };
+type QuizQuestion = { id: string; prompt: string; options: string[]; difficulty?: string; question_type?: string };
 type QuizFeedback = { questionId: string; correct: boolean; answer: unknown; explanation: string | null };
 
 const steps = ["Tài liệu", "Kiểm tra", "Xử lý", "Kết quả"];
@@ -39,12 +41,6 @@ function statusLabel(status: string) {
   return labels[status] ?? status;
 }
 
-function displayContent(content: unknown) {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) return content.map(String).join("\n");
-  return JSON.stringify(content, null, 2);
-}
-
 export default function Home() {
   const [screen, setScreen] = useState<"input" | "review" | "processing" | "result" | "history">("input");
   const [analysisId, setAnalysisId] = useState<string | null>(null);
@@ -66,6 +62,8 @@ export default function Home() {
   const [result, setResult] = useState<ResultJson | null>(null);
   const [activeResultTab, setActiveResultTab] = useState("overview");
   const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]);
+  const [quizLoadError, setQuizLoadError] = useState("");
+  const [chatLoadError, setChatLoadError] = useState("");
   const [quizAnswers, setQuizAnswers] = useState<Record<string, number>>({});
   const [quizFeedback, setQuizFeedback] = useState<QuizFeedback[] | null>(null);
   const [quizScore, setQuizScore] = useState<{ correctAnswers: number; attempt: { score: number; total_questions: number } } | null>(null);
@@ -79,6 +77,7 @@ export default function Home() {
   const selectedTopic = useMemo(() => topics.find(topic => topic.code === "IT"), [topics]);
   const selectedSpecialization = useMemo(() => selectedTopic?.specializations.find(item => item.id === specializationId), [selectedTopic, specializationId]);
   const allOutline = useMemo(() => report?.inputs.flatMap(input => input.structure) ?? outline, [report, outline]);
+  const resultSummary = useMemo(() => result?.summary?.trim() || result?.sections.map(section => section.summary?.trim()).filter(Boolean).join("\n\n") || "Tóm tắt đang được tạo từ các phần nội dung bên dưới.", [result]);
 
   useEffect(() => {
     api<{ data: Topic[] }>("/api/topics").then(response => setTopics(response.data ?? [])).catch(() => undefined);
@@ -91,14 +90,19 @@ export default function Home() {
     setResult(resultResponse.result.result_json);
     setScreen("result");
     setActiveResultTab("overview");
-    try {
-      const quiz = await api<{ quiz: { id: string }; questions: QuizQuestion[] }>(`/api/analyses/${id}/quiz`);
-      setQuizQuestions(quiz.questions ?? []);
-    } catch { setQuizQuestions([]); }
-    try {
-      const messages = await api<{ messages: ChatMessage[] }>(`/api/analyses/${id}/chat`);
-      setChat(messages.messages ?? []);
-    } catch { setChat([]); }
+    const [quizResult, chatResult] = await Promise.allSettled([
+      api<{ quiz: { id: string }; questions: QuizQuestion[] }>(`/api/analyses/${id}/quiz`),
+      api<{ messages: ChatMessage[] }>(`/api/analyses/${id}/chat`),
+    ]);
+    if (quizResult.status === "fulfilled") {
+      setQuizQuestions(quizResult.value.questions ?? []);
+      setQuizLoadError(quizResult.value.questions?.length ? "" : current.quiz_enabled ? "Quiz đã được yêu cầu nhưng chưa có câu hỏi. Hãy thử tải lại hoặc chạy lại phân tích." : "");
+    } else {
+      setQuizQuestions([]);
+      setQuizLoadError(current.quiz_enabled ? quizResult.reason instanceof Error ? quizResult.reason.message : "Không tải được quiz." : "");
+    }
+    if (chatResult.status === "fulfilled") { setChat(chatResult.value.messages ?? []); setChatLoadError(""); }
+    else { setChat([]); setChatLoadError(chatResult.reason instanceof Error ? chatResult.reason.message : "Không tải được chatbot."); }
   }, []);
 
   const loadHistory = useCallback(async () => {
@@ -236,12 +240,43 @@ export default function Home() {
     } finally { setBusy(false); }
   }
 
-  async function exportResult(format: "json" | "markdown" | "html") {
+  async function reloadQuiz() {
+    if (!analysisId) return;
+    setBusy(true); setQuizLoadError("");
+    try {
+      const response = await api<{ quiz: { id: string }; questions: QuizQuestion[] }>(`/api/analyses/${analysisId}/quiz`, { method: "POST" });
+      setQuizQuestions(response.questions ?? []);
+      if (!response.questions?.length) setQuizLoadError("Quiz chưa có câu hỏi. Hãy chạy lại phân tích sau khi hệ thống cập nhật.");
+    } catch (cause) { setQuizLoadError(cause instanceof Error ? cause.message : "Không tải được quiz."); }
+    finally { setBusy(false); }
+  }
+
+  async function reloadChat() {
+    if (!analysisId) return;
+    setBusy(true); setChatLoadError("");
+    try {
+      const response = await api<{ messages: ChatMessage[] }>(`/api/analyses/${analysisId}/chat`);
+      setChat(response.messages ?? []);
+    } catch (cause) { setChatLoadError(cause instanceof Error ? cause.message : "Không tải được chatbot."); }
+    finally { setBusy(false); }
+  }
+
+  function renderChatPanel(className = "panel chat-panel") {
+    return <section className={className}>
+      <div className="chat-heading"><span className="chat-spark">✦</span><div><h3>Hỏi đáp cùng AI</h3><small>Dựa trên tài liệu đã phân tích</small></div><button title="Tải lại hội thoại" onClick={() => void reloadChat()}>↻</button></div>
+      {chatLoadError && <div className="inline-error" role="alert">{chatLoadError}<button onClick={() => void reloadChat()}>Thử lại</button></div>}
+      <div className="chat-messages">{chat.length === 0 ? <div className="chat-welcome"><span className="ai-avatar">✦</span><p>Chào bạn! Mình đã đọc tài liệu này. Bạn có thể hỏi về bất kỳ phần nào trong nội dung.</p><button onClick={() => setChatInput("Tóm tắt những ý quan trọng nhất trong tài liệu")}>Tóm tắt ý quan trọng nhất <span>↗</span></button><button onClick={() => setChatInput("Giải thích thuật ngữ quan trọng nhất trong tài liệu")}>Giải thích thuật ngữ quan trọng <span>↗</span></button></div> : chat.map((message, index) => <div className={`chat-message ${message.role}`} key={message.id ?? index}><div className="chat-role">{message.role === "user" ? "Bạn" : "AI · Dựa trên tài liệu"}</div><p>{message.content}</p>{message.citations?.length ? <small>Nguồn: {message.citations.join(", ")}</small> : null}</div>)}</div>
+      <form className="chat-form" onSubmit={event => void sendChat(event)}><textarea value={chatInput} onChange={event => setChatInput(event.target.value)} maxLength={4000} rows={2} placeholder="Hỏi tiếp về tài liệu..." /><button type="submit" disabled={busy || !chatInput.trim()} aria-label="Gửi câu hỏi">↑</button></form>
+      <div className="chat-disclaimer">AI có thể sai. Hãy kiểm tra nội dung với tài liệu gốc.</div>
+    </section>;
+  }
+
+  async function exportResult(format: "pdf" | "docx" | "markdown" | "html" | "json") {
     if (!analysisId) return;
     setBusy(true); setError("");
     try {
       const response = await api<{ downloadUrl: string }>(`/api/analyses/${analysisId}/exports`, { method: "POST", body: JSON.stringify({ format }) });
-      window.open(response.downloadUrl, "_blank", "noopener,noreferrer");
+      window.location.assign(response.downloadUrl);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Không xuất được tài liệu."); }
     finally { setBusy(false); }
   }
@@ -268,7 +303,9 @@ export default function Home() {
             <button className={activeResultTab === "overview" ? "selected" : ""} onClick={() => setActiveResultTab("overview")}>Tổng quan</button>
             <button className={activeResultTab === "summary" ? "selected" : ""} onClick={() => setActiveResultTab("summary")}>Tóm tắt</button>
             <button className={activeResultTab === "detail" ? "selected" : ""} onClick={() => setActiveResultTab("detail")}>Phân tích chi tiết</button>
-            {quizQuestions.length > 0 && <button className={activeResultTab === "quiz" ? "selected" : ""} onClick={() => setActiveResultTab("quiz")}>Quiz tương tác</button>}
+            {analysis?.quiz_enabled && <button className={activeResultTab === "quiz" ? "selected" : ""} onClick={() => setActiveResultTab("quiz")}>Quiz {quizQuestions.length > 0 ? `(${quizQuestions.length})` : ""}</button>}
+            <button className={activeResultTab === "chat" ? "selected" : ""} onClick={() => setActiveResultTab("chat")}>Hỏi đáp AI</button>
+            <button className={activeResultTab === "report" ? "selected" : ""} onClick={() => setActiveResultTab("report")}>Xuất báo cáo</button>
           </div>}
           <button className={`nav-item ${screen === "history" ? "active" : ""}`} onClick={() => void loadHistory()}><Icon>▦</Icon>Lịch sử <span className="nav-count">{history.length || ""}</span></button>
         </nav>
@@ -286,7 +323,7 @@ export default function Home() {
         <div className="page-content">
           <div className="page-heading">
             <div><div className="eyebrow"><span className="eyebrow-star">✦</span> TRỢ LÝ HỌC TẬP AI</div><h1>{heading}</h1><p>{screen === "input" ? "Tải lên tài liệu hoặc dán nội dung. DocuMind sẽ giúp bạn hiểu sâu và ôn tập hiệu quả hơn." : screen === "review" ? "Xem nội dung đã trích xuất, chỉnh sửa nếu cần rồi xác nhận trước khi AI xử lý." : screen === "history" ? "Mở lại tài liệu, kết quả hoặc phiên xử lý đang dang dở." : screen === "result" ? "Các ý chính, phân tích và công cụ học tập từ tài liệu của bạn." : "Tài liệu đã xác nhận. DocuMind đang phân tích theo từng phần."}</p></div>
-            {screen === "result" && <div className="header-export"><button className="button button-secondary" disabled={busy} onClick={() => void exportResult("markdown")}><Icon>↓</Icon> Xuất báo cáo</button></div>}
+            {screen === "result" && <div className="header-export"><button className="button button-secondary" disabled={busy} onClick={() => setActiveResultTab("report")}><Icon>↓</Icon> Xuất báo cáo</button></div>}
           </div>
 
           {screen !== "history" && <div className="stepper" aria-label="Tiến độ phân tích">{steps.map((label, index) => <div className={`step ${index < stepIndex ? "done" : ""} ${index === stepIndex ? "current" : ""}`} key={label}><span className="step-number">{index < stepIndex ? "✓" : `0${index + 1}`}</span><span className="step-name">{label}</span>{index < steps.length - 1 && <i className="step-line" />}</div>)}</div>}
@@ -349,27 +386,36 @@ export default function Home() {
 
           {screen === "history" && <section className="history-list panel"><div className="panel-heading"><div><div className="panel-kicker">WORKSPACE CÁ NHÂN</div><h2>Các phiên gần đây</h2><p>Mở lại phiên để xem kết quả hoặc tiếp tục chỉnh sửa.</p></div><button className="button button-primary" onClick={() => setScreen("input")}>＋ Phân tích mới</button></div>{history.length === 0 ? <div className="empty-state"><span>▤</span><h3>Chưa có phiên phân tích</h3><p>Tài liệu bạn xử lý sẽ được lưu tại đây.</p><button className="button button-primary" onClick={() => setScreen("input")}>Bắt đầu phân tích <span>→</span></button></div> : history.map(item => <button className="history-row" key={item.id} onClick={() => void openHistoryItem(item)}><span className={`history-file ${item.status === "completed" ? "complete" : ""}`}>{item.status === "completed" ? "✓" : "▤"}</span><span className="history-main"><strong>{item.title}</strong><small>{item.quiz_enabled ? "Có quiz" : "Không có quiz"} · {formatDate(item.updated_at || item.created_at)}</small></span><span className={`status-pill ${item.status === "completed" ? "status-ok" : item.status === "failed" ? "status-error" : "status-warn"}`}>{statusLabel(item.status)}</span><span className="history-open">Mở phiên →</span></button>)}</section>}
 
-          {screen === "result" && result && <div className="results-layout">
+          {screen === "result" && result && <div className={`results-layout ${["chat", "report"].includes(activeResultTab) ? "single-result" : ""}`}>
             <div className="result-column">
               <div className="result-meta-line"><span className="status-pill status-ok">✓ Hoàn thành</span><span>{analysis?.title || result.title || "Tài liệu"}</span><span className="meta-dot">·</span><span>{(report?.totalWords ?? 0).toLocaleString("vi-VN")} từ</span><span className="meta-dot">·</span><span>{(result.sections ?? []).length} mục</span></div>
               {activeResultTab === "overview" && <>
                 <div className="metric-grid"><div className="metric-card"><span className="metric-icon violet">✦</span><small>PHẦN PHÂN TÍCH</small><strong>{result.sections?.length ?? 0}</strong><span>mục nội dung</span></div><div className="metric-card"><span className="metric-icon blue">▤</span><small>ĐỘ DÀI TÀI LIỆU</small><strong>{(report?.totalWords ?? 0).toLocaleString("vi-VN")}</strong><span>từ được xử lý</span></div><div className="metric-card"><span className="metric-icon green">✓</span><small>TRẠNG THÁI</small><strong className="metric-word">Hoàn thành</strong><span>{formatDate(analysis?.completed_at)}</span></div></div>
-                <article className="panel key-takeaways"><div className="result-section-head"><div><div className="panel-kicker">ĐIỀU BẠN CẦN BIẾT</div><h2>Tóm tắt tài liệu</h2></div><button className="text-button" onClick={() => setActiveResultTab("summary")}>Đọc đầy đủ →</button></div><p className="summary-copy">{result.summary || "AI chưa tạo phần tóm tắt riêng cho tài liệu này."}</p><div className="takeaway-list">{result.sections.slice(0, 3).map((section, index) => <div key={`${section.title}-${index}`}><span>{String(index + 1).padStart(2, "0")}</span><div><strong>{section.title}</strong><p>{section.summary || displayContent(section.blocks?.[0]?.content).slice(0, 180)}</p></div></div>)}</div></article>
-                <div className="result-shortcuts"><button onClick={() => setActiveResultTab("detail")}><span>☷</span><strong>Đọc phân tích chi tiết</strong><i>→</i></button>{quizQuestions.length > 0 && <button onClick={() => setActiveResultTab("quiz")}><span>✧</span><strong>Kiểm tra kiến thức bằng quiz</strong><i>→</i></button>}</div>
+                <article className="panel key-takeaways"><div className="result-section-head"><div><div className="panel-kicker">ĐIỀU BẠN CẦN BIẾT</div><h2>Tóm tắt tài liệu</h2></div><button className="text-button" onClick={() => setActiveResultTab("summary")}>Đọc đầy đủ →</button></div><p className="summary-copy">{resultSummary}</p><div className="takeaway-list">{result.sections.slice(0, 3).map((section, index) => <div key={`${section.title}-${index}`}><span>{String(index + 1).padStart(2, "0")}</span><div><strong>{section.title}</strong><p>{section.summary || (section.blocks?.[0] ? blockToPlainText(section.blocks[0]).slice(0, 180) : "")}</p></div></div>)}</div></article>
+                <div className="result-shortcuts"><button onClick={() => setActiveResultTab("detail")}><span>☷</span><strong>Đọc phân tích chi tiết</strong><i>→</i></button>{analysis?.quiz_enabled && <button onClick={() => setActiveResultTab("quiz")}><span>✧</span><strong>{quizQuestions.length ? `Làm quiz (${quizQuestions.length} câu)` : "Mở quiz ôn tập"}</strong><i>→</i></button>}<button onClick={() => setActiveResultTab("chat")}><span>✦</span><strong>Hỏi tiếp về tài liệu</strong><i>→</i></button><button onClick={() => setActiveResultTab("report")}><span>↓</span><strong>Tải báo cáo</strong><i>→</i></button></div>
               </>}
 
-              {activeResultTab === "summary" && <article className="panel result-article"><div className="panel-kicker">TÓM TẮT TÀI LIỆU</div><h2>{result.title || analysis?.title || "Tóm tắt"}</h2><p className="summary-copy">{result.summary || "Chưa có tóm tắt."}</p>{result.sections.map((section, index) => <section className="article-section" key={`${section.title}-${index}`}><h3>{section.title}</h3>{section.summary && <p>{section.summary}</p>}{section.blocks.slice(0, 2).map((block, bi) => <p key={bi}>{displayContent(block.content)}</p>)}</section>)}</article>}
+              {activeResultTab === "summary" && <article className="panel result-article"><div className="panel-kicker">TÓM TẮT TÀI LIỆU</div><h2>{result.title || analysis?.title || "Tóm tắt"}</h2><p className="summary-copy">{resultSummary}</p>{result.sections.map((section, index) => <section className="article-section" key={`${section.title}-${index}`}><h3>{section.title}</h3>{section.summary && <p>{section.summary}</p>}{section.blocks.slice(0, 2).map((block, bi) => <ResultBlockView block={block} key={`${block.type}-${bi}`} />)}</section>)}</article>}
 
-              {activeResultTab === "detail" && <div className="detail-sections">{result.sections.map((section, index) => <article className="panel detail-section" key={`${section.title}-${index}`}><div className="detail-title"><span>{String(index + 1).padStart(2, "0")}</span><div><h2>{section.title}</h2>{section.summary && <p>{section.summary}</p>}</div></div>{section.blocks.map((block, blockIndex) => <div className={`content-block ${["code", "sql", "command"].includes(block.type) ? "code-block" : ""}`} key={`${block.type}-${blockIndex}`}><span className="block-type">{block.type.replaceAll("_", " ")}</span>{["list", "key_points"].includes(block.type) && Array.isArray(block.content) ? <ul>{block.content.map((item, i) => <li key={i}>{String(item)}</li>)}</ul> : <div className="block-content">{displayContent(block.content)}</div>}</div>)}</article>)}</div>}
+              {activeResultTab === "detail" && <div className="detail-sections">{result.sections.map((section, index) => <article className="panel detail-section" key={`${section.title}-${index}`}><div className="detail-title"><span>{String(index + 1).padStart(2, "0")}</span><div><h2>{section.title}</h2>{section.summary && <p>{section.summary}</p>}</div></div>{section.blocks.map((block, blockIndex) => <ResultBlockView block={block} key={`${block.type}-${blockIndex}`} />)}</article>)}</div>}
 
-              {activeResultTab === "quiz" && <article className="panel quiz-panel"><div className="panel-kicker">ÔN TẬP TƯƠNG TÁC</div><h2>Kiểm tra kiến thức</h2><p>Chọn một đáp án cho mỗi câu hỏi. Đáp án sẽ được kiểm tra dựa trên tài liệu.</p>{quizQuestions.length === 0 ? <div className="empty-inline">Phiên này chưa có quiz.</div> : <>{quizQuestions.map((question, index) => { const feedback = quizFeedback?.find(item => item.questionId === question.id); return <div className="quiz-question" key={question.id}><div className="quiz-q-meta"><span>CÂU {String(index + 1).padStart(2, "0")}</span><small>{question.difficulty === "easy" ? "Cơ bản" : question.difficulty === "hard" ? "Nâng cao" : "Trung bình"}</small></div><h3>{question.prompt}</h3><div className="quiz-options">{question.options.map((option, optionIndex) => <label key={optionIndex} className={`${quizAnswers[question.id] === optionIndex ? "selected" : ""} ${feedback && Number(feedback.answer) === optionIndex ? "right-answer" : ""} ${feedback && quizAnswers[question.id] === optionIndex && !feedback.correct ? "wrong-answer" : ""}`}><input type="radio" name={question.id} checked={quizAnswers[question.id] === optionIndex} disabled={Boolean(quizFeedback)} onChange={() => setQuizAnswers(current => ({ ...current, [question.id]: optionIndex }))} /><span className="option-letter">{String.fromCharCode(65 + optionIndex)}</span><span>{option}</span>{feedback && Number(feedback.answer) === optionIndex && <b>✓</b>}</label>)}</div>{feedback?.explanation && <p className={`quiz-explanation ${feedback.correct ? "" : "incorrect"}`}>{feedback.correct ? "Chính xác." : "Chưa chính xác."} {feedback.explanation}</p>}</div>; })}{quizScore && <div className="score-banner"><strong>{quizScore.correctAnswers}/{quizScore.attempt.total_questions} câu đúng</strong><span>Điểm {quizScore.attempt.score}%</span></div>}<div className="quiz-submit-row">{quizFeedback && <button className="button button-secondary" onClick={() => { setQuizFeedback(null); setQuizScore(null); setQuizAnswers({}); }}>Làm lại quiz</button>}<button className="button button-primary" disabled={busy || Boolean(quizFeedback) || Object.keys(quizAnswers).length !== quizQuestions.length} onClick={() => void submitQuiz()}>{busy ? "Đang kiểm tra..." : "Nộp bài quiz →"}</button></div></>}</article>}
+              {activeResultTab === "quiz" && <article className="panel quiz-panel"><div className="panel-kicker">ÔN TẬP TƯƠNG TÁC</div><h2>Kiểm tra kiến thức</h2><p>Chọn một đáp án cho mỗi câu hỏi. Đáp án sẽ được kiểm tra dựa trên tài liệu.</p>{quizLoadError && <div className="inline-error" role="alert">{quizLoadError}<button onClick={() => void reloadQuiz()}>Tạo hoặc tải lại quiz</button></div>}{quizQuestions.length === 0 ? (analysis?.quiz_enabled ? <div className="empty-state compact-empty"><h3>Quiz chưa sẵn sàng</h3><p>Hệ thống sẽ tạo quiz từ những phần tài liệu đã lưu.</p><button className="button button-secondary" disabled={busy} onClick={() => void reloadQuiz()}>Tạo lại quiz</button></div> : <div className="empty-inline">Phiên này không yêu cầu tạo quiz.</div>) : <>{quizQuestions.map((question, index) => { const feedback = quizFeedback?.find(item => item.questionId === question.id); return <div className="quiz-question" key={question.id}><div className="quiz-q-meta"><span>CÂU {String(index + 1).padStart(2, "0")}</span><small>{question.difficulty === "easy" ? "Cơ bản" : question.difficulty === "hard" ? "Nâng cao" : "Trung bình"}</small></div><h3>{question.prompt}</h3><div className="quiz-options">{question.options.map((option, optionIndex) => <label key={optionIndex} className={`${quizAnswers[question.id] === optionIndex ? "selected" : ""} ${feedback && Number(feedback.answer) === optionIndex ? "right-answer" : ""} ${feedback && quizAnswers[question.id] === optionIndex && !feedback.correct ? "wrong-answer" : ""}`}><input type="radio" name={question.id} checked={quizAnswers[question.id] === optionIndex} disabled={Boolean(quizFeedback)} onChange={() => setQuizAnswers(current => ({ ...current, [question.id]: optionIndex }))} /><span className="option-letter">{String.fromCharCode(65 + optionIndex)}</span><span>{option}</span>{feedback && Number(feedback.answer) === optionIndex && <b>✓</b>}</label>)}</div>{feedback?.explanation && <p className={`quiz-explanation ${feedback.correct ? "" : "incorrect"}`}>{feedback.correct ? "Chính xác." : "Chưa chính xác."} {feedback.explanation}</p>}</div>; })}{quizScore && <div className="score-banner"><strong>{quizScore.correctAnswers}/{quizScore.attempt.total_questions} câu đúng</strong><span>Điểm {quizScore.attempt.score}%</span></div>}<div className="quiz-submit-row">{quizFeedback && <button className="button button-secondary" onClick={() => { setQuizFeedback(null); setQuizScore(null); setQuizAnswers({}); }}>Làm lại quiz</button>}<button className="button button-primary" disabled={busy || Boolean(quizFeedback) || Object.keys(quizAnswers).length !== quizQuestions.length} onClick={() => void submitQuiz()}>{busy ? "Đang kiểm tra..." : "Nộp bài quiz →"}</button></div></>}</article>}
 
-              <div className="export-row"><span>Xuất nội dung</span><button onClick={() => void exportResult("markdown")}>Markdown</button><button onClick={() => void exportResult("html")}>HTML</button><button onClick={() => void exportResult("json")}>JSON</button></div>
+              {activeResultTab === "chat" && renderChatPanel("panel chat-workspace")}
+
+              {activeResultTab === "report" && <section className="panel report-workspace">
+                <div className="panel-kicker">BÁO CÁO PHÂN TÍCH</div><h2>Xuất báo cáo</h2><p>Chọn định dạng tải xuống. Bản xem trước dưới đây là nội dung sẽ được đưa vào báo cáo.</p>
+                <div className="report-format-grid">
+                  {[{ id: "pdf", name: "PDF", detail: "Bản trình bày để đọc và chia sẻ" }, { id: "docx", name: "Word (.docx)", detail: "Có thể chỉnh sửa trong Microsoft Word" }, { id: "markdown", name: "Markdown (.md)", detail: "Tài liệu văn bản cho ghi chú và kỹ thuật" }, { id: "html", name: "HTML", detail: "Trang báo cáo có định dạng" }, { id: "json", name: "JSON", detail: "Dữ liệu có cấu trúc cho tích hợp kỹ thuật" }].map(format => <article className="report-format-card" key={format.id}><span className="report-format-icon">{format.id === "pdf" ? "PDF" : format.id === "docx" ? "W" : format.id === "json" ? "{}" : format.id.toUpperCase()}</span><div><strong>{format.name}</strong><p>{format.detail}</p></div><button className="button button-secondary" disabled={busy} onClick={() => void exportResult(format.id as "pdf" | "docx" | "markdown" | "html" | "json")}>{busy ? "Đang tạo..." : "Tải xuống"}</button></article>)}
+                </div>
+                <div className="report-preview"><div className="report-preview-head"><span className="panel-kicker">XEM TRƯỚC</span><span>{result.sections.length} mục · Tiếng Việt</span></div><h1>{result.title || analysis?.title || "Báo cáo học tập"}</h1><p>{resultSummary}</p>{result.sections.map((section, index) => <section key={`${section.title}-${index}`}><h3>{index + 1}. {section.title}</h3>{section.summary && <p>{section.summary}</p>}{section.blocks.map((block, blockIndex) => <ResultBlockView block={block} key={`${block.type}-${blockIndex}`} />)}</section>)}</div>
+              </section>}
+
             </div>
-            <aside className="result-aside">
+            {!(["chat", "report"].includes(activeResultTab)) && <aside className="result-aside">
               <section className="panel topic-card"><div className="topic-card-top"><span>✦</span><small>CHỦ ĐỀ NHẬN DIỆN</small></div><h3>{String(result.metadata?.topicName ?? (analysis?.topic_id ? "Công nghệ thông tin" : "Chủ đề chung"))}</h3><p>{result.metadata?.promptScope === "general_fallback" ? "Dùng prompt chung · kết quả ít chuyên sâu hơn phân tích IT." : result.metadata?.promptScope === "it_specialized" ? "Đang dùng prompt chuyên sâu cho tài liệu IT." : "Phân tích bám sát tài liệu nguồn."}</p><div className="topic-badge">{String(result.metadata?.promptScope ?? "Tài liệu đã phân tích")}</div></section>
-              <section className="panel chat-panel"><div className="chat-heading"><span className="chat-spark">✦</span><div><h3>Hỏi đáp cùng AI</h3><small>Dựa trên tài liệu đã phân tích</small></div><button title="Làm mới nội dung" onClick={() => setChat([])}>↻</button></div><div className="chat-messages">{chat.length === 0 ? <div className="chat-welcome"><span className="ai-avatar">✦</span><p>Chào bạn! Mình đã đọc tài liệu này. Bạn có thể hỏi về bất kỳ phần nào trong nội dung.</p><button onClick={() => setChatInput("Tóm tắt những ý quan trọng nhất trong tài liệu")}>Tóm tắt ý quan trọng nhất <span>↗</span></button></div> : chat.map((message, index) => <div className={`chat-message ${message.role}`} key={message.id ?? index}><div className="chat-role">{message.role === "user" ? "Bạn" : "AI · Dựa trên tài liệu"}</div><p>{message.content}</p>{message.citations?.length ? <small>Nguồn: {message.citations.join(", ")}</small> : null}</div>)}</div><form className="chat-form" onSubmit={event => void sendChat(event)}><textarea value={chatInput} onChange={event => setChatInput(event.target.value)} maxLength={4000} rows={2} placeholder="Hỏi tiếp về tài liệu..." /><button type="submit" disabled={busy || !chatInput.trim()} aria-label="Gửi câu hỏi">↑</button></form><div className="chat-disclaimer">AI có thể sai. Hãy kiểm tra nội dung với tài liệu gốc.</div></section>
-            </aside>
+              <section className="panel chat-quick"><div className="chat-heading"><span className="chat-spark">✦</span><div><h3>Hỏi đáp cùng AI</h3><small>Dựa trên tài liệu đã phân tích</small></div></div>{chatLoadError ? <div className="inline-error">{chatLoadError}<button onClick={() => void reloadChat()}>Thử lại</button></div> : <p>Đặt câu hỏi để làm rõ khái niệm hoặc tìm ý trong tài liệu.</p>}<button className="button button-secondary" onClick={() => setActiveResultTab("chat")}>Mở chatbot →</button></section>
+            </aside>}
           </div>}
 
           {busy && loadingLabel && screen !== "processing" && <div className="busy-bar"><span className="spinner" />{loadingLabel}</div>}
