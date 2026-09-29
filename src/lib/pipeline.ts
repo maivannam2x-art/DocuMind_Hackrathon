@@ -187,7 +187,9 @@ export async function runAnalysis(identity: RequestIdentity, analysisId: string)
             console.warn("Quiz candidates unavailable for chunk; source fallback will be used", quizError instanceof Error ? quizError.message : quizError);
           }
         }
-        await db.from("analysis_chunks").update({ status: "complete", generated_content: value, retry_count: chunk.retry_count + 1 }).eq("id", chunk.id);
+        const { error: saveChunkError } = await db.from("analysis_chunks")
+          .update({ status: "complete", generated_content: value, retry_count: chunk.retry_count + 1 }).eq("id", chunk.id);
+        if (saveChunkError) throw new ApiError(503, "CHUNK_SAVE_FAILED", "Không lưu được phần tài liệu vừa phân tích. Hãy thử tiếp tục xử lý.", saveChunkError.message);
         completed.push({ chunk, value });
         // One Gemini chunk per request. The next request resumes from persisted
         // chunks, so browser refreshes and Vercel time limits do not restart a
