@@ -5,20 +5,25 @@ export type LlmPurpose = "section_generation" | "quiz_generation" | "chat" | "re
 export type LlmRequest = { purpose: LlmPurpose; system: string; prompt: string; schema?: unknown };
 export type LlmResult = { value: unknown; raw: string; provider: string; model: string; inputTokens?: number; outputTokens?: number; latencyMs: number };
 
-function geminiSchema(value: unknown): Record<string, unknown> | undefined {
+export function geminiSchema(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const schema = value as Record<string, unknown>;
   const result: Record<string, unknown> = {};
   if (typeof schema.type === "string") result.type = schema.type.toUpperCase();
   if (typeof schema.description === "string") result.description = schema.description;
-  if (Array.isArray(schema.required)) result.required = schema.required;
   if (Array.isArray(schema.enum)) result.enum = schema.enum;
   if (schema.items) result.items = geminiSchema(schema.items);
   if (schema.properties && typeof schema.properties === "object" && !Array.isArray(schema.properties)) {
-    result.properties = Object.fromEntries(Object.entries(schema.properties as Record<string, unknown>).flatMap(([key, child]) => {
+    const properties = Object.fromEntries(Object.entries(schema.properties as Record<string, unknown>).flatMap(([key, child]) => {
       const converted = geminiSchema(child);
       return converted ? [[key, converted]] : [];
     }));
+    result.properties = properties;
+    if (Array.isArray(schema.required)) {
+      // Gemini rejects a `required` entry when the corresponding property was
+      // dropped during schema conversion (for example, an unsupported union).
+      result.required = schema.required.filter((key): key is string => typeof key === "string" && Object.hasOwn(properties, key));
+    }
   }
   return result.type ? result : undefined;
 }

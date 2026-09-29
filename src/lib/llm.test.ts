@@ -1,9 +1,21 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { generateLlm } from "@/lib/llm";
+import { generateLlm, geminiSchema } from "@/lib/llm";
 import { assertResult } from "@/lib/validation";
 
 describe("LLM provider adapter", () => {
   afterEach(() => { delete process.env.LLM_PROVIDER; });
+
+  it("drops required fields that are not present in the converted Gemini properties", () => {
+    expect(geminiSchema({
+      type: "object",
+      properties: { kept: { type: "string" } },
+      required: ["kept", "missing"],
+    })).toEqual({
+      type: "OBJECT",
+      properties: { kept: { type: "STRING" } },
+      required: ["kept"],
+    });
+  });
 
   it("returns schema-compatible sections in mock mode", async () => {
     process.env.LLM_PROVIDER = "mock";
