@@ -5,12 +5,14 @@ describe("dynamic result contract", () => {
   it("accepts variable section and typed block counts", () => {
     const result = assertResult({
       title: "Study pack",
+      conclusion: "Dựa trên nguồn đã gửi.",
       sections: Array.from({ length: 12 }, (_, index) => ({
         title: `Section ${index + 1}`,
         blocks: [{ type: "summary", content: "Overview" }, { type: "list", content: ["a", "b"] }],
       })),
     });
     expect(result.sections).toHaveLength(12);
+    expect(result.conclusion).toBe("Dựa trên nguồn đã gửi.");
   });
 
   it("rejects missing sections and empty blocks", () => {

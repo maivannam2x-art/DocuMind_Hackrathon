@@ -22,6 +22,7 @@ export const createAnalysisSchema = z.object({
 export const resultSchema = z.object({
   title: z.string().optional(),
   summary: z.string().optional(),
+  conclusion: z.string().optional(),
   sections: z.array(z.object({
     title: z.string().min(1),
     summary: z.string().optional(),

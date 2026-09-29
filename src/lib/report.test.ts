@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import sharp from "sharp";
+import mammoth from "mammoth";
 import { reportToDocx, reportToHtml, reportToMarkdown, reportToPdf } from "@/lib/report";
 
 const report = {
   title: "Báo cáo cơ sở dữ liệu",
   summary: "Tóm tắt Unicode: tiếng Việt và transaction.",
+  conclusion: "Kiểm soát transaction bằng ràng buộc và kiểm tra trạng thái.",
   sections: [{ title: "Giao dịch", summary: "Đảm bảo tính toàn vẹn.", blocks: [
     { type: "list", content: ["Atomicity", "Consistency"] },
     { type: "json", contentType: "json" as const, content: { isolation: "serializable" } },
@@ -14,7 +16,10 @@ const report = {
 describe("report export formats", () => {
   it("renders readable HTML and Markdown with an explicit JSON label", () => {
     expect(reportToMarkdown(report)).toContain("Dữ liệu JSON:");
+    expect(reportToMarkdown(report)).toContain("## Kết luận");
+    expect(reportToMarkdown(report)).toContain(report.conclusion);
     expect(reportToHtml(report)).toContain("JSON · dữ liệu có cấu trúc");
+    expect(reportToHtml(report)).toContain(report.conclusion);
     expect(reportToHtml(report)).toContain("Báo cáo cơ sở dữ liệu");
   });
 
@@ -45,5 +50,6 @@ describe("report export formats", () => {
     expect(docx.subarray(0, 2).toString("ascii")).toBe("PK");
     expect(pdf.length).toBeGreaterThan(1000);
     expect(docx.length).toBeGreaterThan(1000);
+    await expect(mammoth.extractRawText({ buffer: docx })).resolves.toMatchObject({ value: expect.stringContaining(report.conclusion) });
   });
 });

@@ -73,3 +73,18 @@
 .diagram-render{max-width:100%;overflow-x:auto}
 .diagram-render svg{max-width:100%;height:auto}
 @media(max-width:600px){.source-image-preview{max-height:240px}.result-image img{max-height:360px}}
+.conclusion-panel{padding:26px}
+.conclusion-heading{display:flex;align-items:center;gap:13px}
+.conclusion-heading h2{font:700 20px/1.35 Manrope,sans-serif;letter-spacing:-.4px;color:#2a2c45;margin:5px 0 0}
+.conclusion-mark{width:38px;height:38px;border-radius:12px;background:#eaf8f2;color:#3d9b79;display:grid;place-items:center;font-size:19px;font-weight:800;flex:none}
+.conclusion-copy{margin:20px 0;padding:17px 18px;border-left:3px solid #7b67e3;border-radius:0 10px 10px 0;background:#f8f7ff;color:#4c4f67;font-size:13px;line-height:1.85;white-space:pre-wrap}
+.conclusion-highlights{margin-top:24px}
+.conclusion-highlights>h3{font:700 13px Manrope;color:#383a52;margin:0 0 8px}
+.conclusion-highlight{display:flex;gap:12px;border-top:1px solid #eeeef4;padding:12px 0}
+.conclusion-highlight>span{font:800 10px Manrope;color:#8672e2;padding-top:2px}
+.conclusion-highlight strong{font-size:11px;color:#3c3e57}
+.conclusion-highlight p{font-size:10px;line-height:1.65;color:#7e8194;margin:4px 0 0;white-space:pre-wrap}
+.conclusion-actions{display:flex;justify-content:flex-end;gap:9px;flex-wrap:wrap;border-top:1px solid #eeeef4;padding-top:15px;margin-top:15px}
+@media(max-width:600px){.conclusion-panel{padding:17px}.conclusion-heading h2{font-size:17px}.conclusion-copy{font-size:11px;padding:13px}.conclusion-actions{justify-content:stretch}.conclusion-actions .button{flex:1}}
+.result-tabs{display:none}
+@media(max-width:850px){.result-tabs{display:flex;gap:5px;overflow-x:auto;margin:0 0 15px;padding:3px 0 9px;border-bottom:1px solid #e9e9f0;scrollbar-width:none;-webkit-overflow-scrolling:touch}.result-tabs::-webkit-scrollbar{display:none}.result-tabs button{flex:none;white-space:nowrap;border:1px solid #e8e7ef;border-radius:999px;background:#fff;color:#74778b;padding:7px 11px;font-size:10px;font-weight:600;cursor:pointer}.result-tabs button.active{border-color:#d8d0ff;background:#f4f1ff;color:#674fd0}}
