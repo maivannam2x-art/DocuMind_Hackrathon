@@ -121,15 +121,19 @@ async function loadSectionPrompt(analysis: Record<string, unknown>, topicId: str
 export async function runAnalysis(identity: RequestIdentity, analysisId: string) {
   const db = getAdminDb();
   const analysis = await getAnalysis(identity, analysisId);
-  if (!analysis.confirmed_at || !["ready", "failed"].includes(analysis.status)) {
+  if (!analysis.confirmed_at || !["ready", "failed", "processing"].includes(analysis.status)) {
     throw new ApiError(409, "ANALYSIS_NOT_READY", "Chỉ có thể chạy phân tích sau khi người dùng xem và xác nhận đầu vào.", { status: analysis.status });
   }
-  const { data: claimed, error: claimError } = await db.from("analyses").update({
+  let claimed = analysis;
+  if (analysis.status !== "processing") {
+    const { data, error: claimError } = await db.from("analyses").update({
     status: "processing", error_code: null, error_message: null, completed_at: null,
   }).eq("id", analysisId).match(identity.userId ? { user_id: identity.userId } : { guest_session_hash: identity.guestHash })
     .in("status", ["ready", "failed"]).select("*").maybeSingle();
-  if (claimError) throw new ApiError(500, "DATABASE_ERROR", "Không thể bắt đầu xử lý.", claimError.message);
-  if (!claimed) throw new ApiError(409, "ANALYSIS_ALREADY_RUNNING", "Phân tích đã được bắt đầu ở một yêu cầu khác.");
+    if (claimError) throw new ApiError(500, "DATABASE_ERROR", "Không thể bắt đầu xử lý.", claimError.message);
+    if (!data) throw new ApiError(409, "ANALYSIS_ALREADY_RUNNING", "Phân tích đã được bắt đầu ở một yêu cầu khác.");
+    claimed = data;
+  }
 
   try {
     const { data: inputRows, error: inputError } = await db.from("analysis_inputs").select("id,edited_text,normalized_text,original_text")
@@ -142,10 +146,17 @@ export async function runAnalysis(identity: RequestIdentity, analysisId: string)
     const sectionPrompt = await loadSectionPrompt(claimed, itContext.topicId, itContext.specializationId);
     const completed: Array<{ chunk: ChunkRow; value: ReturnType<typeof assertResult> }> = [];
     for (const chunk of chunks as ChunkRow[]) {
+      let invalidSavedContent = false;
       if (chunk.status === "complete" && chunk.generated_content) {
-        try { completed.push({ chunk, value: assertResult(chunk.generated_content) }); continue; } catch { /* regenerate bad persisted output */ }
+        try { completed.push({ chunk, value: assertResult(chunk.generated_content) }); continue; } catch { invalidSavedContent = true; }
       }
-      await db.from("analysis_chunks").update({ status: "processing", error_message: null }).eq("id", chunk.id);
+      let claim = db.from("analysis_chunks").update({ status: "processing", error_message: null }).eq("id", chunk.id);
+      if (invalidSavedContent) claim = claim.eq("status", "complete");
+      else if (chunk.status === "processing") claim = claim.eq("status", "processing").lt("updated_at", new Date(Date.now() - 180_000).toISOString());
+      else claim = claim.in("status", ["pending", "failed"]);
+      const { data: claimedChunk, error: claimChunkError } = await claim.select("id").maybeSingle();
+      if (claimChunkError) throw new ApiError(503, "CHUNK_CLAIM_FAILED", "Không thể bắt đầu phần tài liệu tiếp theo.", claimChunkError.message);
+      if (!claimedChunk) return { analysisId, status: "processing" as const, completedChunks: completed.length, totalChunks: chunks.length, waitMs: 1500 };
       const userPrompt = renderPrompt(sectionPrompt.user_prompt_template, {
         topic: itContext.specializationName,
         custom_prompt: claimed.custom_prompt ?? "",
@@ -164,8 +175,27 @@ export async function runAnalysis(identity: RequestIdentity, analysisId: string)
           llm = await invokeAndLog(analysisId, chunk.id, "repair", repairPrompt, repairText, chunk.retry_count + 2);
           value = assertResult(llm.value);
         }
+        if (claimed.quiz_enabled) {
+          try {
+            const quizPrompt = await loadPrompt("quiz_generation", itContext.topicId, itContext.specializationId);
+            const response = await invokeAndLog(
+              analysisId, chunk.id, "quiz_generation", quizPrompt,
+              renderPrompt(quizPrompt.user_prompt_template, { question_count: "3", content: chunk.content }), 1,
+            );
+            value = assertResult({ ...value, quizCandidates: normalizeQuizCandidates(response.value, chunk.id) });
+          } catch (quizError) {
+            console.warn("Quiz candidates unavailable for chunk; source fallback will be used", quizError instanceof Error ? quizError.message : quizError);
+          }
+        }
         await db.from("analysis_chunks").update({ status: "complete", generated_content: value, retry_count: chunk.retry_count + 1 }).eq("id", chunk.id);
         completed.push({ chunk, value });
+        // One Gemini chunk per request. The next request resumes from persisted
+        // chunks, so browser refreshes and Vercel time limits do not restart a
+        // long document from the beginning.
+        if (completed.length < chunks.length) return {
+          analysisId, status: "processing" as const,
+          completedChunks: completed.length, totalChunks: chunks.length,
+        };
       } catch (error) {
         await db.from("analysis_chunks").update({ status: "failed", error_message: error instanceof Error ? error.message : "LLM error", retry_count: chunk.retry_count + 1 }).eq("id", chunk.id);
         throw error;
@@ -201,7 +231,7 @@ export async function runAnalysis(identity: RequestIdentity, analysisId: string)
       model_provider: process.env.LLM_PROVIDER ?? "mock", model_name: process.env.GEMINI_MODEL ?? "documind-deterministic",
     }).eq("id", analysisId);
     if (finishError) throw new ApiError(500, "ANALYSIS_FINISH_FAILED", "Không cập nhật được trạng thái hoàn tất.");
-    return { analysisId, result: resultJson, quizEnabled: Boolean(claimed.quiz_enabled) };
+    return { analysisId, status: "completed" as const, result: resultJson, quizEnabled: Boolean(claimed.quiz_enabled) };
   } catch (error) {
     const errorCode = error instanceof ApiError ? error.code : "PROCESSING_FAILED";
     await db.from("analyses").update({ status: "failed", error_code: errorCode, error_message: error instanceof Error ? error.message : String(error) }).eq("id", analysisId);
@@ -211,26 +241,14 @@ export async function runAnalysis(identity: RequestIdentity, analysisId: string)
 
 async function generateQuiz(
   analysisId: string, resultId: string, topicId: string | null,
-  specializationId: string | null, completed: Array<{ chunk: ChunkRow }>,
+  specializationId: string | null, completed: Array<{ chunk: ChunkRow; value?: ReturnType<typeof assertResult> }>,
 ) {
   const db = getAdminDb();
-  const prompt = await loadPrompt("quiz_generation", topicId, specializationId);
   const candidates: QuizCandidate[] = [];
   let usedFallback = false;
   for (const item of completed) {
-    let generated: QuizCandidate[] = [];
-    try {
-      const response = await invokeAndLog(
-        analysisId, item.chunk.id, "quiz_generation", prompt,
-        renderPrompt(prompt.user_prompt_template, { question_count: "3", content: item.chunk.content }),
-        1,
-      );
-      generated = normalizeQuizCandidates(response.value, item.chunk.id);
-    } catch (error) {
-      // Quiz generation is an optional enrichment; a temporary quiz model error must
-      // not discard the completed analysis. A source-grounded fallback is added below.
-      console.warn("Quiz LLM generation failed; using source-grounded questions", error instanceof Error ? error.message : error);
-    }
+    const saved = (item.value ?? item.chunk.generated_content) as { quizCandidates?: QuizCandidate[] } | null | undefined;
+    const generated = Array.isArray(saved?.quizCandidates) ? saved.quizCandidates : [];
     candidates.push(...generated);
     const fallback = createSourceGroundedFallback(item.chunk.content, item.chunk.id, Math.max(0, 3 - generated.length));
     if (fallback.length) usedFallback = true;

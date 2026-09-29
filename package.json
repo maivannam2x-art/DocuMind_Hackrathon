@@ -2,7 +2,9 @@
   "name": "documind-backend",
   "version": "1.0.0",
   "private": true,
-  "engines": { "node": ">=20.9.0" },
+  "engines": {
+    "node": ">=20.9.0"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -17,6 +19,7 @@
     "docx": "^9.8.1",
     "katex": "^0.18.9",
     "mammoth": "^1.10.0",
+    "mathjax-full": "^3.2.2",
     "mermaid": "^12.0.0",
     "next": "^15.5.3",
     "pdf-parse": "^1.1.1",

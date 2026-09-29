@@ -315,15 +315,22 @@ export default function Home() {
   async function confirmAndRun() {
     if (!analysisId) return;
     setBusy(true); setError(""); setToast(""); setScreen("processing");
-    const retrying = analysis?.status === "failed" && Boolean(analysis.confirmed_at);
+    const retrying = ["failed", "processing"].includes(analysis?.status ?? "") && Boolean(analysis?.confirmed_at);
     setLoadingLabel(retrying ? "Đang thử xử lý lại phiên đã xác nhận..." : "Đang xác nhận tài liệu...");
     try {
       if (!retrying) await api(`/api/analyses/${analysisId}/confirm`, { method: "POST" });
       setLoadingLabel("AI đang phân tích từng phần tài liệu...");
-      const completed = await api<{ result: ResultJson }>(`/api/analyses/${analysisId}/run`, { method: "POST" });
+      let completed: { status: "processing" | "completed"; completedChunks?: number; totalChunks?: number; waitMs?: number; result?: ResultJson };
+      do {
+        completed = await api<typeof completed>(`/api/analyses/${analysisId}/run`, { method: "POST" });
+        if (completed.status === "processing") {
+          setAnalysis(current => current ? { ...current, status: "processing" } : current);
+          setLoadingLabel(`Đã xử lý ${completed.completedChunks ?? 0}/${completed.totalChunks ?? "?"} phần · đang tiếp tục...`);
+          if (completed.waitMs) await new Promise(resolve => setTimeout(resolve, completed.waitMs));
+        }
+      } while (completed.status === "processing");
       await loadResult(analysisId, { ...(analysis ?? { id: analysisId, title, status: "completed" }), status: "completed" });
       setToast("Phân tích đã hoàn tất. Kết quả được lưu trong workspace của phiên này.");
-      void completed;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Quá trình phân tích bị gián đoạn.");
       setScreen("review");
@@ -352,7 +359,7 @@ export default function Home() {
         setLoadingLabel("Phiên đã xác nhận nhưng bị gián đoạn. Bạn có thể thử xử lý lại.");
       } else {
         setScreen("processing");
-        setLoadingLabel(statusLabel(item.status));
+        setLoadingLabel(item.status === "processing" ? "Phiên đang xử lý dở. Tiếp tục để hoàn thành các phần còn lại." : statusLabel(item.status));
       }
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Không mở được phiên phân tích."); }
     finally { setBusy(false); }
@@ -563,7 +570,7 @@ export default function Home() {
             </aside>
           </div>}
 
-          {screen === "processing" && <div className="processing-wrap"><div className="panel processing-card"><div className="processing-illustration"><span className="orbit orbit-a" /><span className="orbit orbit-b" /><span className="processing-core">✦</span><span className="spark spark-a">✧</span><span className="spark spark-b">✦</span></div><div className="panel-kicker">DOCUMIND ĐANG LÀM VIỆC</div><h2>{loadingLabel || "Đang xử lý phiên của bạn"}</h2><p>{analysis?.title || title || "Tài liệu học tập"}</p><div className="processing-progress"><i /></div><div className="processing-status"><span><i />Đang phân tích nội dung</span><small>Vui lòng giữ nguyên trang này.</small></div><div className="processing-points"><span>✓ Tài liệu đã được xác nhận</span><span>✦ Kết quả sẽ được lưu vào workspace</span></div>{analysis?.status === "failed" && !busy && <button className="button button-primary" onClick={() => void confirmAndRun()}>Thử xử lý lại <span>→</span></button>}</div></div>}
+          {screen === "processing" && <div className="processing-wrap"><div className="panel processing-card"><div className="processing-illustration"><span className="orbit orbit-a" /><span className="orbit orbit-b" /><span className="processing-core">✦</span><span className="spark spark-a">✧</span><span className="spark spark-b">✦</span></div><div className="panel-kicker">DOCUMIND ĐANG LÀM VIỆC</div><h2>{loadingLabel || "Đang xử lý phiên của bạn"}</h2><p>{analysis?.title || title || "Tài liệu học tập"}</p><div className="processing-progress"><i /></div><div className="processing-status"><span><i />Đang phân tích nội dung</span><small>Bạn có thể mở lại phiên từ Lịch sử để tiếp tục.</small></div><div className="processing-points"><span>✓ Tài liệu đã được xác nhận</span><span>✦ Kết quả sẽ được lưu vào workspace</span></div>{["failed", "processing"].includes(analysis?.status ?? "") && !busy && <button className="button button-primary" onClick={() => void confirmAndRun()}>{analysis?.status === "failed" ? "Thử xử lý lại" : "Tiếp tục xử lý"} <span>→</span></button>}</div></div>}
 
           {screen === "history" && <section className="history-list panel"><div className="panel-heading"><div><div className="panel-kicker">WORKSPACE CÁ NHÂN</div><h2>Các phiên gần đây</h2><p>Mở lại phiên để xem kết quả hoặc tiếp tục chỉnh sửa.</p></div><button className="button button-primary" onClick={() => setScreen("input")}>＋ Phân tích mới</button></div>{history.length === 0 ? <div className="empty-state"><span>▤</span><h3>Chưa có phiên phân tích</h3><p>Tài liệu bạn xử lý sẽ được lưu tại đây.</p><button className="button button-primary" onClick={() => setScreen("input")}>Bắt đầu phân tích <span>→</span></button></div> : history.map(item => <button className="history-row" key={item.id} onClick={() => void openHistoryItem(item)}><span className={`history-file ${item.status === "completed" ? "complete" : ""}`}>{item.status === "completed" ? "✓" : "▤"}</span><span className="history-main"><strong>{item.title}</strong><small>{item.quiz_enabled ? "Có quiz" : "Không có quiz"} · {formatDate(item.updated_at || item.created_at)}</small></span><span className={`status-pill ${item.status === "completed" ? "status-ok" : item.status === "failed" ? "status-error" : "status-warn"}`}>{statusLabel(item.status)}</span><span className="history-open">Mở phiên →</span></button>)}</section>}
 

@@ -30,6 +30,14 @@ describe("report export formats", () => {
     expect(html).not.toContain("<pre class=\"source\">RTT=t_2-t_1");
   });
 
+  it("embeds formula images in PDF and Word rather than only LaTeX source", async () => {
+    const formulaReport = { title: "Độ trễ", sections: [{ title: "RTT", blocks: [{ type: "formula", contentType: "latex" as const, content: "RTT=t_2-t_1" }] }] };
+    const pdf = await reportToPdf(formulaReport);
+    const docx = await reportToDocx(formulaReport);
+    expect(pdf.toString("latin1")).toContain("/Subtype /Image");
+    expect(docx.toString("latin1")).toContain("word/media/");
+  });
+
   it("embeds rendered diagram previews in HTML and native images in PDF and Word", async () => {
     const pixelPng = (await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect width="4" height="4" fill="#6248dc"/></svg>')).png().toBuffer()).toString("base64");
     const imageReport = {

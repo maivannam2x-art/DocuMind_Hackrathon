@@ -2,6 +2,7 @@ import path from "node:path";
 import PDFDocument from "pdfkit";
 import { Document, HeadingLevel, ImageRun, Packer, Paragraph } from "docx";
 import katex from "katex";
+import { renderFormulaPng } from "@/lib/formula";
 import { blockToPlainText, type ResultBlock } from "@/lib/result-content";
 
 export type ReportSection = { title: string; summary?: string; blocks: ResultBlock[] };
@@ -17,6 +18,10 @@ function isList(block: ResultBlock) {
 
 function isCode(block: ResultBlock) {
   return block.contentType === "code" || ["code", "sql", "command"].includes(block.type);
+}
+
+function isFormula(block: ResultBlock) {
+  return block.contentType === "latex" || ["formula", "math", "equation"].includes(block.type);
 }
 
 function embeddedDiagramPng(block: ResultBlock) {
@@ -117,6 +122,17 @@ export async function reportToPdf(report: ReportDocument): Promise<Buffer> {
         document.moveDown(0.45);
         continue;
       }
+      if (isFormula(block)) {
+        try {
+          const formula = await renderFormulaPng(typeof block.metadata?.latex === "string" ? block.metadata.latex : blockToPlainText(block));
+          if (document.y > 700 - Math.min(formula.height, 160)) document.addPage();
+          document.fontSize(8).fillColor("#7568bd").text("CÔNG THỨC");
+          document.moveDown(0.3);
+          document.image(formula.bytes, { fit: [490, 160] });
+          document.moveDown(0.45);
+          continue;
+        } catch { /* Preserve the labeled LaTeX source for an invalid formula. */ }
+      }
       const content = markdownBlock(block).replace(/```[a-z]*\n?|```|\$\$\n?/g, "").trim();
       document.moveDown(0.45);
       document.fontSize(8).fillColor("#7568bd").text(block.contentType === "json" || block.type === "json" ? "JSON · dữ liệu có cấu trúc" : block.type.replaceAll("_", " ").toUpperCase());
@@ -140,6 +156,15 @@ export async function reportToDocx(report: ReportDocument): Promise<Buffer> {
         const scaled = scaleDiagram(diagram.width, diagram.height, 600, 400);
         children.push(new Paragraph({ children: [new ImageRun({ data: diagram.bytes, transformation: scaled, type: "png" })] }));
         continue;
+      }
+      if (isFormula(block)) {
+        try {
+          const formula = await renderFormulaPng(typeof block.metadata?.latex === "string" ? block.metadata.latex : blockToPlainText(block));
+          const scaled = scaleDiagram(formula.width, formula.height, 600, 180);
+          children.push(new Paragraph({ text: "Công thức", heading: HeadingLevel.HEADING_3 }));
+          children.push(new Paragraph({ children: [new ImageRun({ data: formula.bytes, transformation: scaled, type: "png" })] }));
+          continue;
+        } catch { /* Preserve the labeled LaTeX source for an invalid formula. */ }
       }
       const isJson = block.contentType === "json" || block.type === "json";
       const label = isJson ? "JSON · dữ liệu có cấu trúc" : block.type.replaceAll("_", " ");

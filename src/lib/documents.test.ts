@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { chunkText, extractFile, mimeTypeForFilename, normalizeText } from "@/lib/documents";
 import { Document, Packer, Paragraph } from "docx";
 import { reportToPdf } from "@/lib/report";
+import sharp from "sharp";
 
 const originalProvider = process.env.LLM_PROVIDER;
 const originalKey = process.env.GEMINI_API_KEY;
@@ -100,5 +101,29 @@ describe("document preparation", () => {
     const pdf = await reportToPdf({ title: "Mạng máy tính", sections: [{ title: "TCP", blocks: [{ type: "paragraph", content: paragraph.repeat(10) }] }] });
     const pdfResult = await extractFile(new File([Uint8Array.from(pdf)], "network.pdf"));
     expect(pdfResult.text).toContain("SYN-ACK");
+  });
+
+  it("covers a near-limit long IT document through bounded ordered chunks", () => {
+    const content = Array.from({ length: 180 }, (_, i) => `## Phần ${i + 1}: PostgreSQL index\nB-tree giúp truy vấn WHERE nhanh hơn trong ví dụ ${i + 1}. ${"EXPLAIN ANALYZE cho biết query plan và chi phí thực thi. ".repeat(40)}`).join("\n\n");
+    const chunks = chunkText(content);
+    expect(content.length).toBeGreaterThan(400_000);
+    expect(chunks.length).toBeGreaterThan(40);
+    expect(chunks.every(chunk => chunk.content.length <= 12_000)).toBe(true);
+    expect(chunks.at(-1)?.content).toContain("ví dụ 180");
+    expect(chunks.every((chunk, index) => index === 0 || chunk.charStart >= chunks[index - 1].charStart)).toBe(true);
+  });
+
+  it("sends a real JPEG image to Gemini Vision and retains OCR formula", async () => {
+    process.env.LLM_PROVIDER = "gemini";
+    process.env.GEMINI_API_KEY = "test-key";
+    const image = await sharp({ create: { width: 32, height: 32, channels: 3, background: "white" } }).jpeg().toBuffer();
+    const vision = { text: "Độ phức tạp thuật toán O(n log n)", visualDescription: "Biểu đồ tăng trưởng", formulas: ["T(n)=n\\log n"], diagramSource: "" };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(vision) }] } }] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const extracted = await extractFile(new File([Uint8Array.from(image)], "complexity.jpg"));
+    expect(extracted.text).toContain("$$T(n)=n\\log n$$");
+    expect(extracted.metadata).toMatchObject({ extraction: "gemini_vision", formulaCount: 1 });
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1].body));
+    expect(body.contents[0].parts[1].inlineData.mimeType).toBe("image/jpeg");
   });
 });
