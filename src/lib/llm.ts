@@ -1,8 +1,15 @@
 import { getAdminDb } from "@/lib/db";
 import { ApiError } from "@/lib/http";
 
-export type LlmPurpose = "section_generation" | "quiz_generation" | "chat" | "repair" | "topic_detection";
-export type LlmRequest = { purpose: LlmPurpose; system: string; prompt: string; schema?: unknown };
+export type LlmPurpose = "section_generation" | "quiz_generation" | "chat" | "repair" | "topic_detection" | "document_ocr";
+export type LlmRequest = {
+  purpose: LlmPurpose;
+  system: string;
+  prompt: string;
+  schema?: unknown;
+  media?: { mimeType: string; base64Data: string };
+  timeoutMs?: number;
+};
 export type LlmResult = { value: unknown; raw: string; provider: string; model: string; inputTokens?: number; outputTokens?: number; latencyMs: number };
 
 export function geminiSchema(value: unknown): Record<string, unknown> | undefined {
@@ -48,6 +55,9 @@ export async function generateLlm(request: LlmRequest): Promise<LlmResult> {
   const model = process.env.GEMINI_MODEL ?? "gemini-3.8-flash";
   const started = Date.now();
   if (provider === "mock") {
+    if (request.purpose === "document_ocr") {
+      throw new ApiError(503, "VISION_PROVIDER_REQUIRED", "Để đọc chữ, công thức hoặc sơ đồ trong ảnh, hãy cấu hình LLM_PROVIDER=gemini và GEMINI_API_KEY.");
+    }
     const value = mockResponse(request);
     const raw = JSON.stringify(value);
     return { value, raw, provider: "mock", model: "documind-deterministic", latencyMs: Date.now() - started };
@@ -66,10 +76,13 @@ export async function generateLlm(request: LlmRequest): Promise<LlmResult> {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: request.system }] },
-      contents: [{ role: "user", parts: [{ text: request.prompt }] }],
+      contents: [{ role: "user", parts: [
+        { text: request.prompt },
+        ...(request.media ? [{ inlineData: { mimeType: request.media.mimeType, data: request.media.base64Data } }] : []),
+      ] }],
       generationConfig: { responseMimeType: "application/json", ...(responseSchema ? { responseSchema } : {}), temperature: 0.2 },
     }),
-    signal: AbortSignal.timeout(90_000),
+    signal: AbortSignal.timeout(request.timeoutMs ?? 90_000),
   });
   const payload = await response.json() as {
     candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;

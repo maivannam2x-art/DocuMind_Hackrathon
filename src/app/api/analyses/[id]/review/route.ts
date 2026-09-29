@@ -3,7 +3,7 @@ import { z } from "zod";
 import { getAnalysis, getIdentity } from "@/lib/auth";
 import { getAdminDb } from "@/lib/db";
 import { chunkText, normalizeText } from "@/lib/documents";
-import { ApiError, errorResponse, ok } from "@/lib/http";
+import { ApiError, errorResponse, ok, readJson } from "@/lib/http";
 import { safeBody } from "@/lib/validation";
 
 const reviewSchema = z.object({
@@ -23,7 +23,7 @@ export async function PATCH(request: NextRequest, context: Context) {
     const { id } = await context.params;
     const analysis = await getAnalysis(identity, id);
     if (!["draft", "needs_review"].includes(analysis.status)) throw new ApiError(409, "REVIEW_NOT_AVAILABLE", "Phân tích chưa ở bước kiểm tra và chỉnh sửa.");
-    const body = safeBody(reviewSchema, await request.json());
+    const body = safeBody(reviewSchema, await readJson(request));
     const db = getAdminDb();
     const updates: Record<string, unknown> = {};
     if (body.title !== undefined) updates.title = body.title;

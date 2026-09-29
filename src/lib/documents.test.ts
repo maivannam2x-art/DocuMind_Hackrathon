@@ -1,5 +1,15 @@
-import { describe, expect, it } from "vitest";
-import { chunkText, extractFile, normalizeText } from "@/lib/documents";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { chunkText, extractFile, mimeTypeForFilename, normalizeText } from "@/lib/documents";
+
+const originalProvider = process.env.LLM_PROVIDER;
+const originalKey = process.env.GEMINI_API_KEY;
+const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  if (originalProvider === undefined) delete process.env.LLM_PROVIDER; else process.env.LLM_PROVIDER = originalProvider;
+  if (originalKey === undefined) delete process.env.GEMINI_API_KEY; else process.env.GEMINI_API_KEY = originalKey;
+});
 
 describe("document preparation", () => {
   it("normalizes line endings, control characters, and repeated whitespace", () => {
@@ -20,6 +30,44 @@ describe("document preparation", () => {
       mimeType: "text/typescript",
       text: "export const answer = 42;",
     });
+  });
+
+  it("maps supported raster images and rejects unknown file extensions", () => {
+    expect(mimeTypeForFilename("diagram.PNG")).toBe("image/png");
+    expect(mimeTypeForFilename("formula.jpeg")).toBe("image/jpeg");
+    expect(mimeTypeForFilename("archive.exe")).toBeNull();
+  });
+
+  it("uses Gemini Vision to extract text, formulas, and diagram code from an image", async () => {
+    process.env.LLM_PROVIDER = "gemini";
+    process.env.GEMINI_API_KEY = "test-key";
+    const vision = { text: "TCP thiết lập kết nối qua ba bước.", visualDescription: "SYN, SYN-ACK và ACK theo thứ tự.", formulas: ["RTT = t_2 - t_1"], diagramSource: "sequenceDiagram\nA->>B: SYN" };
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      candidates: [{ content: { parts: [{ text: JSON.stringify(vision) }] } }],
+      usageMetadata: { promptTokenCount: 12, candidatesTokenCount: 18 },
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const file = new File([pngSignature], "network-diagram.png", { type: "image/png" });
+
+    const extracted = await extractFile(file);
+    expect(extracted.text).toContain("TCP thiết lập kết nối");
+    expect(extracted.text).toContain("$$RTT = t_2 - t_1$$");
+    expect(extracted.text).toContain("```mermaid");
+    expect(extracted.metadata).toMatchObject({ extraction: "gemini_vision", formulaCount: 1, hasDiagram: true });
+    const request = JSON.parse(String(fetchMock.mock.calls[0][1]?.body)) as { contents: Array<{ parts: Array<{ inlineData?: { mimeType: string; data: string } }> }> };
+    expect(request.contents[0].parts[1].inlineData?.mimeType).toBe("image/png");
+    expect(request.contents[0].parts[1].inlineData?.data).toBe(pngSignature.toString("base64"));
+  });
+
+  it("returns a setup error when image OCR is requested while the mock provider is active", async () => {
+    process.env.LLM_PROVIDER = "mock";
+    const file = new File([pngSignature], "network.png", { type: "image/png" });
+    await expect(extractFile(file)).rejects.toMatchObject({ status: 503, code: "VISION_PROVIDER_REQUIRED" });
+  });
+
+  it("rejects files whose extension does not match their binary signature", async () => {
+    const file = new File(["not a png"], "broken.png", { type: "image/png" });
+    await expect(extractFile(file)).rejects.toMatchObject({ status: 422, code: "FILE_CONTENT_MISMATCH" });
   });
 
   it("keeps headings as chunk titles and covers all content", () => {

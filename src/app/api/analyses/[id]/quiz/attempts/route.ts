@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 import { getAnalysis, getIdentity, ownerFilter } from "@/lib/auth";
 import { getAdminDb } from "@/lib/db";
-import { ApiError, errorResponse, ok } from "@/lib/http";
+import { ApiError, errorResponse, ok, readJson } from "@/lib/http";
 import { safeBody } from "@/lib/validation";
 
 const answerSchema = z.object({ answers: z.record(z.string(), z.union([z.number().int(), z.string(), z.boolean()])) });
@@ -13,7 +13,7 @@ export async function POST(request: NextRequest, context: Context) {
     const identity = await getIdentity(request);
     const { id } = await context.params;
     await getAnalysis(identity, id);
-    const body = safeBody(answerSchema, await request.json());
+    const body = safeBody(answerSchema, await readJson(request));
     const db = getAdminDb();
     const { data: quiz, error: quizError } = await db.from("quizzes").select("id").eq("analysis_id", id).eq("status", "ready")
       .order("created_at", { ascending: false }).limit(1).maybeSingle();
@@ -38,4 +38,3 @@ export async function POST(request: NextRequest, context: Context) {
     return ok({ attempt, correctAnswers: correct, feedback });
   } catch (error) { return errorResponse(error); }
 }
-

@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import katex from "katex";
 import { scalarText, type ResultBlock } from "@/lib/result-content";
 
-function MermaidDiagram({ source }: { source: string }) {
+function MermaidDiagram({ source, analysisId, resultId }: { source: string; analysisId?: string; resultId?: string }) {
   const id = `mermaid-${useId().replaceAll(":", "")}`;
   const [svg, setSvg] = useState("");
   const [error, setError] = useState("");
+  const persistedKey = useRef("");
   useEffect(() => {
     let current = true;
     import("mermaid").then(async ({ default: mermaid }) => {
@@ -20,6 +21,21 @@ function MermaidDiagram({ source }: { source: string }) {
     });
     return () => { current = false; };
   }, [id, source]);
+  useEffect(() => {
+    if (!svg || !analysisId || !resultId) return;
+    const key = `${analysisId}:${resultId}:${source}`;
+    if (persistedKey.current === key) return;
+    let current = true;
+    void fetch(`/api/analyses/${analysisId}/assets`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ resultId, assetType: "mermaid", source, svg, title: "Sơ đồ trong kết quả phân tích" }),
+    }).then(response => {
+      if (response.ok && current) persistedKey.current = key;
+    }).catch(() => undefined);
+    return () => { current = false; };
+  }, [analysisId, resultId, source, svg]);
   return <div className="diagram-view">
     {svg && <div className="diagram-render" role="img" aria-label="Sơ đồ từ tài liệu" dangerouslySetInnerHTML={{ __html: svg }} />}
     {error && <p className="diagram-error">{error}</p>}
@@ -40,7 +56,7 @@ function TableView({ content }: { content: unknown }) {
   return <div className="table-scroll"><table className="result-table"><thead><tr>{headers.map(header => <th key={header}>{header.replaceAll("_", " ")}</th>)}</tr></thead><tbody>{rows.map((row, rowIndex) => <tr key={rowIndex}>{headers.map((header, colIndex) => <td key={`${rowIndex}-${header}`}>{Array.isArray(row) ? scalarText(row[colIndex]) : scalarText((row as Record<string, unknown>)?.[header])}</td>)}</tr>)}</tbody></table></div>;
 }
 
-export function ResultBlockView({ block }: { block: ResultBlock }) {
+export function ResultBlockView({ block, analysisId, resultId }: { block: ResultBlock; analysisId?: string; resultId?: string }) {
   const type = block.type.toLowerCase().replaceAll("-", "_");
   const contentType = block.contentType ?? (typeof block.metadata?.contentType === "string" ? block.metadata.contentType as ResultBlock["contentType"] : undefined);
   const source = typeof block.content === "string" ? block.content : scalarText(block.content);
@@ -54,7 +70,11 @@ export function ResultBlockView({ block }: { block: ResultBlock }) {
     const rendered = katex.renderToString(math.replace(/^\$\$?|\$\$?$/g, ""), { displayMode: true, throwOnError: false, trust: false, strict: "ignore" });
     body = <div className="formula-view" aria-label="Công thức toán" dangerouslySetInnerHTML={{ __html: rendered }} />;
   } else if (contentType === "mermaid" || type === "mermaid" || (type === "diagram" && /^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|mindmap|journey|requirementDiagram)\b/.test(source.trim()))) {
-    body = <MermaidDiagram source={source} />;
+    body = <MermaidDiagram source={source.replace(/^```(?:mermaid)?\s*|```$/g, "").trim()} analysisId={analysisId} resultId={resultId} />;
+  } else if (contentType === "image" || type === "image") {
+    const candidate = typeof block.metadata?.assetUrl === "string" ? block.metadata.assetUrl : "";
+    const safeUrl = candidate.startsWith("/") || /^https:\/\//i.test(candidate) ? candidate : "";
+    body = safeUrl ? <figure className="result-image"><img src={safeUrl} alt={String(block.metadata?.alt ?? "Hình ảnh từ tài liệu")} /><figcaption>{String(block.metadata?.caption ?? "Hình ảnh từ nội dung đã phân tích")}</figcaption></figure> : <p className="diagram-error">Ảnh chưa có liên kết lưu trữ an toàn. Nội dung mô tả vẫn được giữ trong dữ liệu kết quả.</p>;
   } else if (contentType === "plantuml" || type === "plantuml") {
     body = <div className="diagram-view"><span className="format-badge">PlantUML · mã sơ đồ</span><pre>{source}</pre><p className="diagram-error">Mã PlantUML được giữ nguyên để xuất hoặc mở bằng công cụ PlantUML.</p></div>;
   } else if (contentType === "table" || type === "table") {

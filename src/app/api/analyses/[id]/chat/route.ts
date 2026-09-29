@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 import { getAnalysis, getIdentity } from "@/lib/auth";
 import { getAdminDb } from "@/lib/db";
-import { ApiError, errorResponse, ok } from "@/lib/http";
+import { ApiError, errorResponse, ok, readJson } from "@/lib/http";
 import { generateLlm, loadPrompt } from "@/lib/llm";
 import { safeBody } from "@/lib/validation";
 
@@ -31,7 +31,7 @@ export async function POST(request: NextRequest, context: Context) {
     const { id } = await context.params;
     const analysis = await getAnalysis(identity, id);
     if (analysis.status !== "completed") throw new ApiError(409, "ANALYSIS_NOT_COMPLETE", "Bạn có thể hỏi tiếp sau khi phân tích hoàn tất.");
-    const body = safeBody(chatSchema, await request.json());
+    const body = safeBody(chatSchema, await readJson(request));
     const db = getAdminDb();
     const [{ data: result }, { data: history, error: historyError }] = await Promise.all([
       db.from("analysis_results").select("result_json,summary").eq("analysis_id", id).eq("is_current", true).maybeSingle(),

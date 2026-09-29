@@ -5,7 +5,7 @@ import { ResultBlockView } from "@/components/result-block";
 import { blockToPlainText, type ResultBlock } from "@/lib/result-content";
 
 type Topic = { id: string; code: string; name: string; specializations: Array<{ id: string; name: string; parent_id: string | null; description?: string }> };
-type ApiInput = { id: string; original_name: string; edited_text?: string | null; normalized_text?: string | null; original_text?: string | null; status?: string };
+type ApiInput = { id: string; original_name: string; edited_text?: string | null; normalized_text?: string | null; original_text?: string | null; status?: string; metadata?: Record<string, unknown>; previewUrl?: string | null };
 type OutlineItem = { chunkIndex: number; title: string; preview: string };
 type InputReport = { id: string; name: string; characters: number; words: number; chunkCount: number; structure: OutlineItem[] };
 type ValidationReport = { valid: boolean; totalCharacters: number; totalWords: number; inputCount: number; chunkCount: number; blockingErrors: Array<{ message: string }>; warnings: Array<{ message: string }>; notes: Array<{ message: string }>; inputs: InputReport[] };
@@ -17,6 +17,7 @@ type ResultJson = { title?: string; summary?: string; sections: Section[]; metad
 type ChatMessage = { id?: string; role: "user" | "assistant"; content: string; citations?: string[] };
 type QuizQuestion = { id: string; prompt: string; options: string[]; difficulty?: string; question_type?: string };
 type QuizFeedback = { questionId: string; correct: boolean; answer: unknown; explanation: string | null };
+type SignedUpload = { inputId: string; name: string; signedUrl: string; mimeType: string; file: File };
 
 const steps = ["Tài liệu", "Kiểm tra", "Xử lý", "Kết quả"];
 
@@ -47,6 +48,9 @@ export default function Home() {
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [topics, setTopics] = useState<Topic[]>([]);
   const [files, setFiles] = useState<File[]>([]);
+  const [pendingUploads, setPendingUploads] = useState<SignedUpload[]>([]);
+  const [pendingIngestId, setPendingIngestId] = useState<string | null>(null);
+  const [isDraggingFiles, setIsDraggingFiles] = useState(false);
   const [title, setTitle] = useState("");
   const [text, setText] = useState("");
   const [customPrompt, setCustomPrompt] = useState("");
@@ -60,6 +64,7 @@ export default function Home() {
   const [outline, setOutline] = useState<OutlineItem[]>([]);
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [result, setResult] = useState<ResultJson | null>(null);
+  const [resultId, setResultId] = useState<string | null>(null);
   const [activeResultTab, setActiveResultTab] = useState("overview");
   const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]);
   const [quizLoadError, setQuizLoadError] = useState("");
@@ -84,9 +89,10 @@ export default function Home() {
   }, []);
 
   const loadResult = useCallback(async (id: string, analysisData?: Analysis) => {
-    const resultResponse = await api<{ analysis: Analysis; result: { result_json: ResultJson } }>(`/api/analyses/${id}/result`);
+    const resultResponse = await api<{ analysis: Analysis; result: { id: string; result_json: ResultJson } }>(`/api/analyses/${id}/result`);
     const current = analysisData ?? resultResponse.analysis;
     setAnalysis(current);
+    setResultId(resultResponse.result.id);
     setResult(resultResponse.result.result_json);
     setScreen("result");
     setActiveResultTab("overview");
@@ -125,25 +131,75 @@ export default function Home() {
     setScreen("review");
   }, []);
 
+  async function completeFileUploadAndReview(id: string, uploads: SignedUpload[]) {
+    for (const upload of uploads) {
+      const response = await fetch(upload.signedUrl, {
+        method: "PUT",
+        headers: { "content-type": upload.mimeType, "cache-control": "max-age=3600", "x-upsert": "true" },
+        body: upload.file,
+      });
+      if (!response.ok) throw new Error(`Không tải được tệp “${upload.name}”. Kiểm tra kết nối rồi chọn tiếp tục tải tệp.`);
+      setPendingUploads(current => current.filter(item => item.inputId !== upload.inputId));
+    }
+    setPendingIngestId(id);
+    setLoadingLabel("Đang trích xuất văn bản, công thức và sơ đồ từ tệp...");
+    await api(`/api/analyses/${id}/ingest`, { method: "POST" });
+    setPendingIngestId(null);
+    await refreshReview(id);
+    setPendingUploads([]);
+    setFiles([]);
+    setText("");
+  }
+
+  async function retryIncompleteUpload() {
+    if (!analysisId || (!pendingUploads.length && !pendingIngestId)) return;
+    setBusy(true); setError("");
+    try {
+      if (pendingUploads.length) await completeFileUploadAndReview(analysisId, pendingUploads);
+      else {
+        setLoadingLabel("Đang trích xuất lại nội dung tệp...");
+        await api(`/api/analyses/${analysisId}/ingest`, { method: "POST" });
+        setPendingIngestId(null);
+        await refreshReview(analysisId);
+        setFiles([]); setText("");
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Không thể tiếp tục tải và đọc tài liệu.");
+    } finally { setBusy(false); setLoadingLabel(""); }
+  }
+
   async function createAnalysis(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (analysisId && (pendingUploads.length || pendingIngestId)) { await retryIncompleteUpload(); return; }
     if (!text.trim() && files.length === 0) { setError("Dán nội dung hoặc chọn ít nhất một tệp để bắt đầu."); return; }
     setBusy(true); setError(""); setToast(""); setLoadingLabel("Đang lưu tài liệu và chuẩn bị kiểm tra...");
     try {
-      const form = new FormData();
-      form.set("title", title.trim() || files[0]?.name.replace(/\.[^.]+$/, "") || "Phân tích mới");
-      form.set("topicCode", topicMode);
-      if (topicMode === "IT" && specializationId) form.set("specializationId", specializationId);
-      if (text.trim()) form.set("text", text);
-      form.set("quizEnabled", String(quizEnabled));
+      const titleValue = title.trim() || files[0]?.name.replace(/\.[^.]+$/, "") || "Phân tích mới";
       const depthLabel = depth === "quick" ? "nhanh" : depth === "deep" ? "chuyên sâu" : "tiêu chuẩn";
       const prompt = [`Mức phân tích: ${depthLabel}.`, selectedSpecialization ? `Chuyên ngành IT đã chọn: ${selectedSpecialization.name}.` : "", customPrompt.trim()].filter(Boolean).join(" ");
-      if (prompt) form.set("customPrompt", prompt);
-      files.forEach(file => form.append("files", file));
-      const created = await api<{ analysis: Analysis }>("/api/analyses", { method: "POST", body: form });
+      const created = await api<{ analysis: Analysis; uploads: Array<Omit<SignedUpload, "file">> }>("/api/analyses", {
+        method: "POST",
+        body: JSON.stringify({
+          title: titleValue,
+          topicCode: topicMode,
+          ...(topicMode === "IT" && specializationId ? { specializationId } : {}),
+          ...(text.trim() ? { text } : {}),
+          quizEnabled,
+          ...(prompt ? { customPrompt: prompt } : {}),
+          files: files.map(file => ({ name: file.name, byteSize: file.size })),
+        }),
+      });
       setAnalysisId(created.analysis.id); setAnalysis(created.analysis);
-      await refreshReview(created.analysis.id);
-      setFiles([]); setText("");
+      const uploads: SignedUpload[] = created.uploads.map((upload, index) => ({ ...upload, file: files[index] })).filter(upload => Boolean(upload.file));
+      if (uploads.length) {
+        setPendingUploads(uploads);
+        setPendingIngestId(created.analysis.id);
+        setLoadingLabel("Đang tải tệp trực tiếp lên kho riêng tư...");
+        await completeFileUploadAndReview(created.analysis.id, uploads);
+      } else {
+        await refreshReview(created.analysis.id);
+        setFiles([]); setText("");
+      }
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Không thể tạo phiên phân tích."); }
     finally { setBusy(false); setLoadingLabel(""); }
   }
@@ -197,7 +253,7 @@ export default function Home() {
   async function openHistoryItem(item: HistoryRow) {
     setBusy(true); setError(""); setAnalysisId(item.id); setTitle(item.title);
     try {
-      const details = await api<{ analysis: Analysis; inputs: ApiInput[]; result: { result_json: ResultJson } | null }>(`/api/analyses/${item.id}?includeContent=true`);
+      const details = await api<{ analysis: Analysis; inputs: ApiInput[]; result: { id: string; result_json: ResultJson } | null }>(`/api/analyses/${item.id}?includeContent=true`);
       setAnalysis(details.analysis); setInputRows(details.inputs);
       setInputTexts(Object.fromEntries(details.inputs.map(input => [input.id, input.edited_text ?? input.normalized_text ?? input.original_text ?? ""])));
       setReport(details.analysis.validation_report ?? null);
@@ -281,10 +337,18 @@ export default function Home() {
     finally { setBusy(false); }
   }
 
+  function addFiles(accepted: File[]) {
+    const tooLarge = accepted.filter(file => file.size > 20 * 1024 * 1024);
+    const valid = accepted.filter(file => file.size <= 20 * 1024 * 1024);
+    if (tooLarge.length) setError(`Tệp “${tooLarge[0].name}” vượt giới hạn 20 MB.`);
+    else if (files.length + valid.length > 10) setError("Mỗi phân tích chỉ nhận tối đa 10 tệp. Hãy bỏ bớt tệp rồi thử lại.");
+    else setError("");
+    setFiles(current => [...current, ...valid].slice(0, 10));
+  }
+
   function onFileChange(event: ChangeEvent<HTMLInputElement>) {
-    const accepted = Array.from(event.target.files ?? []);
-    const next = [...files, ...accepted].slice(0, 10);
-    setFiles(next); setError(""); event.target.value = "";
+    addFiles(Array.from(event.target.files ?? []));
+    event.target.value = "";
   }
 
   const stepIndex = screen === "input" ? 0 : screen === "review" ? 1 : screen === "processing" ? 2 : 3;
@@ -328,7 +392,7 @@ export default function Home() {
 
           {screen !== "history" && <div className="stepper" aria-label="Tiến độ phân tích">{steps.map((label, index) => <div className={`step ${index < stepIndex ? "done" : ""} ${index === stepIndex ? "current" : ""}`} key={label}><span className="step-number">{index < stepIndex ? "✓" : `0${index + 1}`}</span><span className="step-name">{label}</span>{index < steps.length - 1 && <i className="step-line" />}</div>)}</div>}
 
-          {error && <div className="alert alert-error" role="alert"><span>!</span><div><strong>Chưa thể hoàn tất bước này</strong><p>{error}</p></div><button onClick={() => setError("")} aria-label="Đóng">×</button></div>}
+          {error && <div className="alert alert-error" role="alert"><span>!</span><div><strong>Chưa thể hoàn tất bước này</strong><p>{error}</p></div>{(pendingUploads.length > 0 || pendingIngestId) && <button className="button button-secondary" disabled={busy} onClick={() => void retryIncompleteUpload()}>Tiếp tục tải tệp</button>}<button onClick={() => setError("")} aria-label="Đóng">×</button></div>}
           {toast && <div className="alert alert-success" role="status"><span>✓</span><div>{toast}</div><button onClick={() => setToast("")} aria-label="Đóng">×</button></div>}
 
           {screen === "input" && <form className="input-layout" onSubmit={createAnalysis}>
@@ -350,9 +414,9 @@ export default function Home() {
 
             <section className="panel source-panel">
               <div className="panel-heading"><div><div className="panel-kicker">NỘI DUNG ĐẦU VÀO</div><h2>Tài liệu của bạn</h2><p>Tải tệp hoặc dán nội dung để bắt đầu.</p></div><span className="panel-index">02</span></div>
-              <label className={`dropzone ${files.length ? "has-files" : ""}`}>
-                <input type="file" multiple accept=".pdf,.docx,.txt,.md,.markdown,.json,.js,.jsx,.ts,.tsx,.py,.java,.sql,.html,.css,.xml,.yaml,.yml,.sh,.go,.rs,.c,.cpp,.h" onChange={onFileChange} />
-                <span className="upload-icon"><Icon>↑</Icon></span><strong>Kéo thả tệp vào đây</strong><span>hoặc <b>chọn từ thiết bị</b></span><small>PDF, DOCX, TXT, Markdown, JSON và mã nguồn · Tối đa 10 tệp</small>
+              <label className={`dropzone ${files.length ? "has-files" : ""} ${isDraggingFiles ? "is-dragging" : ""}`} onDragOver={event => { event.preventDefault(); setIsDraggingFiles(true); }} onDragLeave={() => setIsDraggingFiles(false)} onDrop={event => { event.preventDefault(); setIsDraggingFiles(false); addFiles(Array.from(event.dataTransfer.files)); }}>
+                <input type="file" multiple accept=".pdf,.docx,.txt,.md,.markdown,.json,.js,.jsx,.ts,.tsx,.py,.java,.sql,.html,.css,.xml,.yaml,.yml,.sh,.go,.rs,.c,.cpp,.h,.png,.jpg,.jpeg" onChange={onFileChange} />
+                <span className="upload-icon"><Icon>↑</Icon></span><strong>Kéo thả tệp vào đây</strong><span>hoặc <b>chọn từ thiết bị</b></span><small>PDF, DOCX, TXT, Markdown, mã nguồn, PNG/JPG · Tối đa 10 tệp, 20 MB mỗi tệp</small>
               </label>
               {files.length > 0 && <div className="file-list">{files.map((file, index) => <div className="file-row" key={`${file.name}-${index}`}><span className="file-type">{file.name.split(".").pop()?.toUpperCase().slice(0, 4)}</span><div className="file-meta"><strong>{file.name}</strong><small>{(file.size / 1024).toFixed(0)} KB</small></div><button type="button" onClick={() => setFiles(current => current.filter((_, i) => i !== index))} aria-label={`Xóa ${file.name}`}>×</button></div>)}</div>}
               <div className="or-divider"><span>HOẶC DÁN NỘI DUNG</span></div>
@@ -371,7 +435,7 @@ export default function Home() {
               {(report?.warnings ?? []).map((item, i) => <div className="validation-message validation-warning" key={`w-${i}`}><b>i</b><span>{item.message}</span></div>)}
               {(report?.notes ?? []).map((item, i) => <div className="validation-message validation-note" key={`n-${i}`}><b>✓</b><span>{item.message}</span></div>)}
               <div className="review-section-title"><div><h3>Nội dung đã trích xuất</h3><p>Chỉnh sửa nếu nội dung thiếu hoặc chưa chính xác.</p></div><span className="editable-label">Có thể chỉnh sửa</span></div>
-              {inputRows.map(input => <label className="field extracted-field" key={input.id}><span><Icon>▤</Icon>{input.original_name || "Tài liệu"}<small>{(inputTexts[input.id] ?? "").length.toLocaleString("vi-VN")} ký tự</small></span><textarea value={inputTexts[input.id] ?? ""} onChange={event => setInputTexts(current => ({ ...current, [input.id]: event.target.value }))} rows={Math.min(18, Math.max(7, Math.ceil((inputTexts[input.id] ?? "").length / 115)))} maxLength={500000} /></label>)}
+              {inputRows.map(input => <div className="field extracted-field" key={input.id}><span><Icon>▤</Icon>{input.original_name || "Tài liệu"}<small>{(inputTexts[input.id] ?? "").length.toLocaleString("vi-VN")} ký tự</small></span>{input.previewUrl && <img className="source-image-preview" src={input.previewUrl} alt={`Ảnh gốc: ${input.original_name || "tài liệu"}`} />}{input.metadata?.extraction === "gemini_vision" || input.metadata?.extraction === "gemini_vision_pdf_ocr" || input.metadata?.extraction === "docx_text_and_gemini_vision" ? <small className="extraction-hint">Đã đọc chữ và nhận diện công thức/sơ đồ bằng AI. Hãy kiểm tra lại nội dung bên dưới.</small> : null}<textarea aria-label={`Nội dung trích xuất: ${input.original_name || "tài liệu"}`} value={inputTexts[input.id] ?? ""} onChange={event => setInputTexts(current => ({ ...current, [input.id]: event.target.value }))} rows={Math.min(18, Math.max(7, Math.ceil((inputTexts[input.id] ?? "").length / 115)))} maxLength={500000} /></div>)}
               <div className="review-section-title outline-heading"><div><h3>Cấu trúc được đề xuất</h3><p>AI sẽ xử lý tài liệu theo từng phần để giữ ngữ cảnh.</p></div></div>
               <div className="outline-list">{allOutline.map((item, index) => <div className="outline-item" key={`${item.chunkIndex}-${index}`}><span>{String(index + 1).padStart(2, "0")}</span><div><strong>{item.title || `Phần ${index + 1}`}</strong><small>{item.preview}</small></div><Icon>⌄</Icon></div>)}{allOutline.length === 0 && <div className="empty-inline">Lưu nội dung chỉnh sửa để cập nhật cấu trúc tài liệu.</div>}</div>
               <div className="review-actions"><button className="button button-quiet" disabled={busy} onClick={() => { setScreen("input"); setError(""); }}>← Quay lại</button><div><button className="button button-secondary" disabled={busy} onClick={() => void saveReview()}>{busy ? "Đang lưu..." : "Lưu chỉnh sửa"}</button><button className="button button-primary" disabled={busy || !analysisId} onClick={() => void confirmAndRun()}>{busy ? "Đang xử lý..." : <>Xác nhận và xử lý <span>→</span></>}</button></div></div>
@@ -395,9 +459,9 @@ export default function Home() {
                 <div className="result-shortcuts"><button onClick={() => setActiveResultTab("detail")}><span>☷</span><strong>Đọc phân tích chi tiết</strong><i>→</i></button>{analysis?.quiz_enabled && <button onClick={() => setActiveResultTab("quiz")}><span>✧</span><strong>{quizQuestions.length ? `Làm quiz (${quizQuestions.length} câu)` : "Mở quiz ôn tập"}</strong><i>→</i></button>}<button onClick={() => setActiveResultTab("chat")}><span>✦</span><strong>Hỏi tiếp về tài liệu</strong><i>→</i></button><button onClick={() => setActiveResultTab("report")}><span>↓</span><strong>Tải báo cáo</strong><i>→</i></button></div>
               </>}
 
-              {activeResultTab === "summary" && <article className="panel result-article"><div className="panel-kicker">TÓM TẮT TÀI LIỆU</div><h2>{result.title || analysis?.title || "Tóm tắt"}</h2><p className="summary-copy">{resultSummary}</p>{result.sections.map((section, index) => <section className="article-section" key={`${section.title}-${index}`}><h3>{section.title}</h3>{section.summary && <p>{section.summary}</p>}{section.blocks.slice(0, 2).map((block, bi) => <ResultBlockView block={block} key={`${block.type}-${bi}`} />)}</section>)}</article>}
+              {activeResultTab === "summary" && <article className="panel result-article"><div className="panel-kicker">TÓM TẮT TÀI LIỆU</div><h2>{result.title || analysis?.title || "Tóm tắt"}</h2><p className="summary-copy">{resultSummary}</p>{result.sections.map((section, index) => <section className="article-section" key={`${section.title}-${index}`}><h3>{section.title}</h3>{section.summary && <p>{section.summary}</p>}{section.blocks.slice(0, 2).map((block, bi) => <ResultBlockView block={block} analysisId={analysisId ?? undefined} resultId={resultId ?? undefined} key={`${block.type}-${bi}`} />)}</section>)}</article>}
 
-              {activeResultTab === "detail" && <div className="detail-sections">{result.sections.map((section, index) => <article className="panel detail-section" key={`${section.title}-${index}`}><div className="detail-title"><span>{String(index + 1).padStart(2, "0")}</span><div><h2>{section.title}</h2>{section.summary && <p>{section.summary}</p>}</div></div>{section.blocks.map((block, blockIndex) => <ResultBlockView block={block} key={`${block.type}-${blockIndex}`} />)}</article>)}</div>}
+              {activeResultTab === "detail" && <div className="detail-sections">{result.sections.map((section, index) => <article className="panel detail-section" key={`${section.title}-${index}`}><div className="detail-title"><span>{String(index + 1).padStart(2, "0")}</span><div><h2>{section.title}</h2>{section.summary && <p>{section.summary}</p>}</div></div>{section.blocks.map((block, blockIndex) => <ResultBlockView block={block} analysisId={analysisId ?? undefined} resultId={resultId ?? undefined} key={`${block.type}-${blockIndex}`} />)}</article>)}</div>}
 
               {activeResultTab === "quiz" && <article className="panel quiz-panel"><div className="panel-kicker">ÔN TẬP TƯƠNG TÁC</div><h2>Kiểm tra kiến thức</h2><p>Chọn một đáp án cho mỗi câu hỏi. Đáp án sẽ được kiểm tra dựa trên tài liệu.</p>{quizLoadError && <div className="inline-error" role="alert">{quizLoadError}<button onClick={() => void reloadQuiz()}>Tạo hoặc tải lại quiz</button></div>}{quizQuestions.length === 0 ? (analysis?.quiz_enabled ? <div className="empty-state compact-empty"><h3>Quiz chưa sẵn sàng</h3><p>Hệ thống sẽ tạo quiz từ những phần tài liệu đã lưu.</p><button className="button button-secondary" disabled={busy} onClick={() => void reloadQuiz()}>Tạo lại quiz</button></div> : <div className="empty-inline">Phiên này không yêu cầu tạo quiz.</div>) : <>{quizQuestions.map((question, index) => { const feedback = quizFeedback?.find(item => item.questionId === question.id); return <div className="quiz-question" key={question.id}><div className="quiz-q-meta"><span>CÂU {String(index + 1).padStart(2, "0")}</span><small>{question.difficulty === "easy" ? "Cơ bản" : question.difficulty === "hard" ? "Nâng cao" : "Trung bình"}</small></div><h3>{question.prompt}</h3><div className="quiz-options">{question.options.map((option, optionIndex) => <label key={optionIndex} className={`${quizAnswers[question.id] === optionIndex ? "selected" : ""} ${feedback && Number(feedback.answer) === optionIndex ? "right-answer" : ""} ${feedback && quizAnswers[question.id] === optionIndex && !feedback.correct ? "wrong-answer" : ""}`}><input type="radio" name={question.id} checked={quizAnswers[question.id] === optionIndex} disabled={Boolean(quizFeedback)} onChange={() => setQuizAnswers(current => ({ ...current, [question.id]: optionIndex }))} /><span className="option-letter">{String.fromCharCode(65 + optionIndex)}</span><span>{option}</span>{feedback && Number(feedback.answer) === optionIndex && <b>✓</b>}</label>)}</div>{feedback?.explanation && <p className={`quiz-explanation ${feedback.correct ? "" : "incorrect"}`}>{feedback.correct ? "Chính xác." : "Chưa chính xác."} {feedback.explanation}</p>}</div>; })}{quizScore && <div className="score-banner"><strong>{quizScore.correctAnswers}/{quizScore.attempt.total_questions} câu đúng</strong><span>Điểm {quizScore.attempt.score}%</span></div>}<div className="quiz-submit-row">{quizFeedback && <button className="button button-secondary" onClick={() => { setQuizFeedback(null); setQuizScore(null); setQuizAnswers({}); }}>Làm lại quiz</button>}<button className="button button-primary" disabled={busy || Boolean(quizFeedback) || Object.keys(quizAnswers).length !== quizQuestions.length} onClick={() => void submitQuiz()}>{busy ? "Đang kiểm tra..." : "Nộp bài quiz →"}</button></div></>}</article>}
 
@@ -408,7 +472,7 @@ export default function Home() {
                 <div className="report-format-grid">
                   {[{ id: "pdf", name: "PDF", detail: "Bản trình bày để đọc và chia sẻ" }, { id: "docx", name: "Word (.docx)", detail: "Có thể chỉnh sửa trong Microsoft Word" }, { id: "markdown", name: "Markdown (.md)", detail: "Tài liệu văn bản cho ghi chú và kỹ thuật" }, { id: "html", name: "HTML", detail: "Trang báo cáo có định dạng" }, { id: "json", name: "JSON", detail: "Dữ liệu có cấu trúc cho tích hợp kỹ thuật" }].map(format => <article className="report-format-card" key={format.id}><span className="report-format-icon">{format.id === "pdf" ? "PDF" : format.id === "docx" ? "W" : format.id === "json" ? "{}" : format.id.toUpperCase()}</span><div><strong>{format.name}</strong><p>{format.detail}</p></div><button className="button button-secondary" disabled={busy} onClick={() => void exportResult(format.id as "pdf" | "docx" | "markdown" | "html" | "json")}>{busy ? "Đang tạo..." : "Tải xuống"}</button></article>)}
                 </div>
-                <div className="report-preview"><div className="report-preview-head"><span className="panel-kicker">XEM TRƯỚC</span><span>{result.sections.length} mục · Tiếng Việt</span></div><h1>{result.title || analysis?.title || "Báo cáo học tập"}</h1><p>{resultSummary}</p>{result.sections.map((section, index) => <section key={`${section.title}-${index}`}><h3>{index + 1}. {section.title}</h3>{section.summary && <p>{section.summary}</p>}{section.blocks.map((block, blockIndex) => <ResultBlockView block={block} key={`${block.type}-${blockIndex}`} />)}</section>)}</div>
+                <div className="report-preview"><div className="report-preview-head"><span className="panel-kicker">XEM TRƯỚC</span><span>{result.sections.length} mục · Tiếng Việt</span></div><h1>{result.title || analysis?.title || "Báo cáo học tập"}</h1><p>{resultSummary}</p>{result.sections.map((section, index) => <section key={`${section.title}-${index}`}><h3>{index + 1}. {section.title}</h3>{section.summary && <p>{section.summary}</p>}{section.blocks.map((block, blockIndex) => <ResultBlockView block={block} analysisId={analysisId ?? undefined} resultId={resultId ?? undefined} key={`${block.type}-${blockIndex}`} />)}</section>)}</div>
               </section>}
 
             </div>

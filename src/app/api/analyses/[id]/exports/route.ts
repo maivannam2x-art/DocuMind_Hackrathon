@@ -1,9 +1,10 @@
 import { NextRequest } from "next/server";
 import { randomUUID } from "node:crypto";
+import sharp from "sharp";
 import { z } from "zod";
 import { getAnalysis, getIdentity } from "@/lib/auth";
 import { getAdminDb } from "@/lib/db";
-import { ApiError, errorResponse, ok } from "@/lib/http";
+import { ApiError, errorResponse, ok, readJson } from "@/lib/http";
 import { safeBody } from "@/lib/validation";
 import { reportToDocx, reportToHtml, reportToMarkdown, reportToPdf, type ReportDocument } from "@/lib/report";
 
@@ -16,11 +17,44 @@ export async function POST(request: NextRequest, context: Context) {
     const { id } = await context.params;
     const analysis = await getAnalysis(identity, id);
     if (analysis.status !== "completed") throw new ApiError(409, "RESULT_NOT_READY", "Chỉ xuất được kết quả đã hoàn tất.");
-    const { format } = safeBody(exportSchema, await request.json());
+    const { format } = safeBody(exportSchema, await readJson(request));
     const db = getAdminDb();
     const { data: result, error } = await db.from("analysis_results").select("id,result_json").eq("analysis_id", id).eq("is_current", true).maybeSingle();
     if (error || !result) throw new ApiError(404, "RESULT_NOT_FOUND", "Không có kết quả để xuất.");
-    const document = result.result_json as ReportDocument;
+    let document = result.result_json as ReportDocument;
+    if (["html", "pdf", "docx"].includes(format)) {
+      const { data: assets } = await db.from("generated_assets").select("asset_type,source,storage_bucket,storage_path")
+        .eq("analysis_id", id).eq("result_id", result.id).eq("asset_type", "mermaid");
+      const svgBySource = new Map<string, { svg: string; png: string; width: number; height: number }>();
+      for (const asset of assets ?? []) {
+        if (!asset.source || !asset.storage_bucket || !asset.storage_path) continue;
+        try {
+          const { data: image } = await db.storage.from(asset.storage_bucket).download(asset.storage_path);
+          if (!image) continue;
+          const svg = Buffer.from(await image.arrayBuffer()).toString("utf8").trim();
+          if (!svg.startsWith("<svg") || !svg.includes("</svg>") || /<\s*(script|foreignObject|iframe|object|embed)\b|\bon[a-z]+\s*=|javascript:|data:text\/html|(?:href|src)\s*=\s*["']\s*https?:/i.test(svg)) continue;
+          const png = await sharp(Buffer.from(svg)).resize({ width: 1800, height: 1200, fit: "inside", withoutEnlargement: true }).png().toBuffer();
+          const dimensions = await sharp(png).metadata();
+          if (png.length > 4_000_000 || !dimensions.width || !dimensions.height) continue;
+          svgBySource.set(String(asset.source).trim(), { svg: Buffer.from(svg).toString("base64"), png: png.toString("base64"), width: dimensions.width, height: dimensions.height });
+        } catch (assetError) {
+          console.warn("Skipping an unavailable rendered diagram in export", assetError instanceof Error ? assetError.message : "unknown error");
+        }
+      }
+      if (svgBySource.size && document.sections) {
+        document = {
+          ...document,
+          sections: document.sections.map(section => ({
+            ...section,
+            blocks: section.blocks.map(block => {
+              const source = typeof block.content === "string" ? block.content.trim() : "";
+              const image = svgBySource.get(source);
+              return image ? { ...block, metadata: { ...block.metadata, inlineSvgBase64: image.svg, inlinePngBase64: image.png, inlinePngWidth: image.width, inlinePngHeight: image.height } } : block;
+            }),
+          })),
+        };
+      }
+    }
     const extensions = { markdown: "md", docx: "docx", pdf: "pdf", html: "html", json: "json" } as const;
     const contentTypes = {
       markdown: "text/markdown; charset=utf-8",

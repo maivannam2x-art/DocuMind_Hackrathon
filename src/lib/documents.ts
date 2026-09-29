@@ -2,8 +2,9 @@ import mammoth from "mammoth";
 import pdfParse from "pdf-parse";
 import { ApiError } from "@/lib/http";
 import { envInt } from "@/lib/db";
+import { generateLlm } from "@/lib/llm";
 
-export type ExtractedFile = { text: string; mimeType: string; byteSize: number; name: string };
+export type ExtractedFile = { text: string; mimeType: string; byteSize: number; name: string; metadata?: Record<string, unknown> };
 
 const MIME_BY_EXT: Record<string, string> = {
   pdf: "application/pdf",
@@ -30,7 +31,63 @@ const MIME_BY_EXT: Record<string, string> = {
   c: "text/x-c",
   cpp: "text/x-c++",
   h: "text/x-c",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
 };
+
+export function mimeTypeForFilename(name: string) {
+  return MIME_BY_EXT[name.split(".").pop()?.toLowerCase() ?? ""] ?? null;
+}
+
+function verifyFileSignature(extension: string, buffer: Buffer) {
+  const isPng = buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  const isJpeg = buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  const isPdf = buffer.subarray(0, 5).toString("ascii") === "%PDF-";
+  const isZip = buffer.length >= 4 && buffer[0] === 0x50 && buffer[1] === 0x4b && buffer[2] === 0x03 && buffer[3] === 0x04;
+  if (extension === "png" && !isPng) throw new ApiError(422, "FILE_CONTENT_MISMATCH", "Tệp có đuôi PNG nhưng dữ liệu không phải ảnh PNG hợp lệ.");
+  if (["jpg", "jpeg"].includes(extension) && !isJpeg) throw new ApiError(422, "FILE_CONTENT_MISMATCH", "Tệp có đuôi JPG nhưng dữ liệu không phải ảnh JPEG hợp lệ.");
+  if (extension === "pdf" && !isPdf) throw new ApiError(422, "FILE_CONTENT_MISMATCH", "Tệp không có cấu trúc PDF hợp lệ.");
+  if (extension === "docx" && !isZip) throw new ApiError(422, "FILE_CONTENT_MISMATCH", "Tệp DOCX không có cấu trúc Office hợp lệ.");
+}
+
+const OCR_SCHEMA = {
+  type: "object",
+  required: ["text", "visualDescription", "formulas", "diagramSource"],
+  properties: {
+    text: { type: "string", description: "Văn bản nhìn thấy trong tài liệu, giữ đúng thứ tự và chính tả." },
+    visualDescription: { type: "string", description: "Mô tả ngắn gọn sơ đồ, biểu đồ hoặc hình minh họa có ý nghĩa." },
+    formulas: { type: "array", items: { type: "string" }, description: "Công thức toán dưới dạng LaTeX, không tự suy diễn." },
+    diagramSource: { type: "string", description: "Mã Mermaid hợp lệ nếu sơ đồ có thể chuyển thành Mermaid; để trống nếu không phù hợp." },
+  },
+};
+
+async function extractVisual(buffer: Buffer, mimeType: string, name: string) {
+  const maxVisionBytes = envInt("MAX_VISION_MB", 8) * 1024 * 1024;
+  if (buffer.length > maxVisionBytes) {
+    throw new ApiError(413, "VISION_FILE_TOO_LARGE", `Tệp ảnh cần OCR phải nhỏ hơn ${Math.floor(maxVisionBytes / 1024 / 1024)} MB.`);
+  }
+  const result = await generateLlm({
+    purpose: "document_ocr",
+    system: "Bạn là bộ trích xuất tài liệu chính xác. Không bịa nội dung. Chép nguyên văn chữ, giữ cấu trúc bảng, ký hiệu và ngôn ngữ gốc. Viết công thức dưới dạng LaTeX. Mô tả sơ đồ theo đúng quan hệ nhìn thấy; chỉ sinh Mermaid khi có thể biểu diễn trung thực. Trả đủ các trường trong schema.",
+    prompt: `Đọc tệp “${name}”. Trích xuất chữ nhìn thấy, công thức, bảng và mô tả sơ đồ/biểu đồ. Nếu tài liệu không có một loại nội dung nào thì trả chuỗi rỗng hoặc mảng rỗng.`,
+    schema: OCR_SCHEMA,
+    media: { mimeType, base64Data: buffer.toString("base64") },
+    timeoutMs: 30_000,
+  });
+  const value = result.value && typeof result.value === "object" ? result.value as Record<string, unknown> : null;
+  if (!value) throw new ApiError(502, "VISION_INVALID_RESPONSE", "Bộ đọc ảnh trả về dữ liệu không đúng định dạng. Hãy thử lại hoặc nhập văn bản thủ công.");
+  const pieces: string[] = [];
+  if (typeof value.text === "string" && value.text.trim()) pieces.push(value.text.trim());
+  const formulas = Array.isArray(value.formulas) ? value.formulas.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).slice(0, 30) : [];
+  if (formulas.length) pieces.push(`Công thức nhận diện:\n${formulas.map(formula => `$$${formula.trim()}$$`).join("\n")}`);
+  if (typeof value.diagramSource === "string" && value.diagramSource.trim()) pieces.push(`Sơ đồ nhận diện (Mermaid):\n\`\`\`mermaid\n${value.diagramSource.trim()}\n\`\`\``);
+  if (typeof value.visualDescription === "string" && value.visualDescription.trim()) pieces.push(`Mô tả hình/sơ đồ: ${value.visualDescription.trim()}`);
+  return {
+    text: normalizeText(pieces.join("\n\n")),
+    metadata: { extraction: "gemini_vision", sourceMimeType: mimeType, hasText: Boolean(value.text), formulaCount: formulas.length, hasDiagram: Boolean(value.diagramSource), hasVisualDescription: Boolean(value.visualDescription) },
+  };
+}
 
 export async function extractFile(file: File): Promise<ExtractedFile> {
   const name = file.name || "document";
@@ -41,16 +98,60 @@ export async function extractFile(file: File): Promise<ExtractedFile> {
   }
   const maxBytes = envInt("MAX_UPLOAD_MB", 20) * 1024 * 1024;
   if (file.size > maxBytes) throw new ApiError(413, "FILE_TOO_LARGE", `Mỗi tệp tối đa ${Math.floor(maxBytes / 1024 / 1024)} MB.`);
+  if (!file.size) throw new ApiError(422, "EMPTY_FILE", `Tệp ${name} đang trống.`);
   const buffer = Buffer.from(await file.arrayBuffer());
+  verifyFileSignature(extension, buffer);
   let text = "";
+  let metadata: Record<string, unknown> = { extraction: "text_parser" };
   try {
-    if (extension === "pdf") text = (await pdfParse(buffer)).text;
-    else if (extension === "docx") text = (await mammoth.extractRawText({ buffer })).value;
+    if (expectedMime.startsWith("image/")) {
+      const visual = await extractVisual(buffer, expectedMime, name);
+      text = visual.text;
+      metadata = visual.metadata;
+    } else if (extension === "pdf") {
+      text = (await pdfParse(buffer)).text;
+      if (normalizeText(text).length < 40) {
+        const visual = await extractVisual(buffer, expectedMime, name);
+        text = visual.text;
+        metadata = { ...visual.metadata, extraction: "gemini_vision_pdf_ocr", fallbackReason: "pdf_text_layer_empty" };
+      }
+    } else if (extension === "docx") {
+      text = (await mammoth.extractRawText({ buffer })).value;
+      const embedded: Array<{ mimeType: string; data: Buffer }> = [];
+      let ignoredEmbeddedImages = 0;
+      await mammoth.convertToHtml({ buffer }, {
+        convertImage: mammoth.images.imgElement(async image => {
+          if (embedded.length >= 3 || !["image/png", "image/jpeg"].includes(image.contentType)) ignoredEmbeddedImages++;
+          else embedded.push({ mimeType: image.contentType, data: Buffer.from(await image.read("base64"), "base64") });
+          return { src: "" };
+        }),
+      });
+      const imageText: string[] = [];
+      const ocrWarnings: string[] = [];
+      for (let index = 0; index < embedded.length; index++) {
+        try {
+          const visual = await extractVisual(embedded[index].data, embedded[index].mimeType, `${name} · hình ${index + 1}`);
+          if (visual.text) imageText.push(`Nội dung hình nhúng ${index + 1}:\n${visual.text}`);
+        } catch (error) {
+          if (error instanceof ApiError && ["VISION_FILE_TOO_LARGE", "VISION_PROVIDER_REQUIRED", "LLM_KEY_MISSING"].includes(error.code)) ocrWarnings.push(error.message);
+          else if (error instanceof ApiError) ocrWarnings.push("Một hình nhúng chưa đọc được; có thể chỉnh sửa nội dung ở bước kiểm tra.");
+          else throw error;
+        }
+      }
+      if (imageText.length) text = [text, ...imageText].filter(Boolean).join("\n\n");
+      metadata = {
+        extraction: imageText.length ? "docx_text_and_gemini_vision" : "docx_text_parser",
+        embeddedImagesProcessed: embedded.length,
+        ignoredEmbeddedImages,
+        ...(ocrWarnings.length ? { ocrWarnings } : {}),
+      };
+    }
     else text = new TextDecoder("utf-8", { fatal: false }).decode(buffer);
   } catch (error) {
+    if (error instanceof ApiError) throw error;
     throw new ApiError(422, "DOCUMENT_EXTRACTION_FAILED", `Không trích xuất được tệp ${name}.`, error instanceof Error ? error.message : undefined);
   }
-  return { name, mimeType: expectedMime, byteSize: file.size, text: normalizeText(text) };
+  return { name, mimeType: expectedMime, byteSize: file.size, text: normalizeText(text), metadata };
 }
 
 export function normalizeText(value: string) {

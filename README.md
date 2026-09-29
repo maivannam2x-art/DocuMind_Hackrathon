@@ -45,7 +45,11 @@ curl -i -c cookies.txt -X POST http://localhost:3000/api/analyses \
   -d '{"title":"Cơ sở dữ liệu","topicCode":"IT","quizEnabled":true,"text":"Nội dung tài liệu dài ít nhất 40 ký tự..."}'
 ```
 
-Keep the returned analysis ID, then send the same cookie jar through validate, review, confirm and run. For signed-in users, send the Supabase access token as an Authorization Bearer token. File uploads use multipart form data with one or more files fields; accepted formats are PDF, DOCX and TXT.
+Keep the returned analysis ID, then send the same cookie jar through validate, review, confirm and run. For signed-in users, send the Supabase access token as an Authorization Bearer token. The browser requests short-lived signed upload URLs from the API, uploads files directly to the private `analysis-inputs` bucket, and then calls the ingest route. This avoids sending large files through Vercel Functions. Each file is capped at `MAX_UPLOAD_MB` (default 20 MB); visual OCR inputs are capped at `MAX_VISION_MB` (default 8 MB).
+
+Supported inputs include PDF, DOCX, TXT, Markdown, JSON, common IT source-code formats, PNG, JPG, and JPEG. Text-layer PDFs and DOCX files are parsed locally. Scanned PDFs and raster images use Gemini Vision. DOCX OCR inspects up to three embedded PNG/JPEG images. The review screen shows an image preview and editable extracted text so users can correct OCR before confirming analysis.
+
+LaTeX formulas render with KaTeX. Mermaid diagrams render in the result view with strict security settings and are stored as private SVG assets. HTML exports embed the saved SVG, while PDF and Word exports embed PNG renderings if the result view has persisted them; otherwise the structured data retains the diagram source. Apply `20260929045405_documind_visual_assets.sql` to create the private `analysis-assets` bucket. The browser only receives short-lived signed asset/upload URLs; server-only Supabase credentials remain on the server.
 
 ## Data model
 
@@ -53,4 +57,4 @@ The schema has 16 application tables. Inputs and chunks are separately stored fo
 
 ## Tests
 
-Run npm test, npm run typecheck, and npm run build.
+Run `npm test`, `npm run lint`, `npm run typecheck`, and `npm run build`.

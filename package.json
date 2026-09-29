@@ -2,6 +2,7 @@
   "name": "documind-backend",
   "version": "1.0.0",
   "private": true,
+  "engines": { "node": ">=20.9.0" },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -22,6 +23,7 @@
     "pdfkit": "^0.17.2",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
+    "sharp": "^0.35.5",
     "zod": "^4.1.5"
   },
   "devDependencies": {

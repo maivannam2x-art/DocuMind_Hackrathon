@@ -61,3 +61,15 @@
 .report-preview>section h3{font:700 14px Manrope;color:#424256}
 .report-preview>section>p{font-size:10px;line-height:1.7;color:#72758a}
 @media(max-width:600px){.report-workspace{padding:16px}.report-format-card{grid-template-columns:36px 1fr;gap:9px}.report-format-icon{width:34px;height:34px}.report-format-card .button{grid-column:2;justify-self:start}.chat-workspace{min-height:560px;padding:14px}.chat-workspace .chat-messages{min-height:340px;padding:12px}.report-preview-head{align-items:flex-start;gap:8px;flex-direction:column}}
+
+/* Input and visual-content states used throughout the input → review flow. */
+.dropzone.is-dragging{border-color:#765ce5;background:#f5f2ff;box-shadow:0 0 0 4px rgba(118,92,229,.1)}
+.source-image-preview{display:block;width:min(100%,560px);max-height:340px;object-fit:contain;object-position:left center;padding:8px;background:#f7f7fb;border:1px solid #e9e9f0;border-radius:10px}
+.extraction-hint{display:block;padding:9px 11px;border:1px solid #e8e2ff;border-radius:8px;background:#faf9ff;color:#6957bd!important;font-size:10px!important;line-height:1.55!important}
+.result-image{margin:8px 0 4px;padding:10px;border:1px solid #e9e9f0;border-radius:10px;background:#fff}
+.result-image img{display:block;width:100%;max-height:520px;object-fit:contain}
+.result-image figcaption{margin-top:8px;color:#7d8093;font-size:9px}
+.diagram-view pre,.diagram-view details pre{white-space:pre-wrap;overflow-wrap:anywhere}
+.diagram-render{max-width:100%;overflow-x:auto}
+.diagram-render svg{max-width:100%;height:auto}
+@media(max-width:600px){.source-image-preview{max-height:240px}.result-image img{max-height:360px}}

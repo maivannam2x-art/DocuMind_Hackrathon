@@ -1,7 +1,7 @@
 export type ResultBlock = {
   type: string;
   content: unknown;
-  contentType?: "text" | "json" | "latex" | "mermaid" | "plantuml" | "table" | "code";
+  contentType?: "text" | "json" | "latex" | "mermaid" | "plantuml" | "table" | "code" | "image";
   metadata?: Record<string, unknown>;
 };
 
@@ -15,6 +15,7 @@ export function scalarText(value: unknown): string {
 
 export function blockToPlainText(block: ResultBlock): string {
   const type = block.type.toLowerCase();
+  if (block.contentType === "image" || type === "image") return String(block.metadata?.alt ?? block.metadata?.caption ?? "Hình ảnh đính kèm");
   if (block.contentType === "json" || type === "json") return `Dữ liệu JSON:\n${JSON.stringify(block.content, null, 2)}`;
   if (block.contentType === "table" || type === "table") {
     const object = block.content && typeof block.content === "object" && !Array.isArray(block.content) ? block.content as Record<string, unknown> : null;

@@ -13,6 +13,10 @@ export const createAnalysisSchema = z.object({
     return value;
   }, z.boolean()).optional(),
   text: z.string().max(500000).optional(),
+  files: z.array(z.object({
+    name: z.string().trim().min(1).max(255),
+    byteSize: z.number().int().positive().max(20 * 1024 * 1024),
+  })).max(10).optional(),
 });
 
 export const resultSchema = z.object({
@@ -24,7 +28,7 @@ export const resultSchema = z.object({
     blocks: z.array(z.object({
       type: z.string().min(1),
       content: z.unknown(),
-      contentType: z.enum(["text", "json", "latex", "mermaid", "plantuml", "table", "code"]).optional(),
+      contentType: z.enum(["text", "json", "latex", "mermaid", "plantuml", "table", "code", "image"]).optional(),
       metadata: z.record(z.string(), z.unknown()).optional(),
     }).superRefine((block, context) => {
       const structured = block.content !== null && typeof block.content === "object" && !(Array.isArray(block.content) && ["list", "key_points"].includes(block.type));
@@ -33,8 +37,69 @@ export const resultSchema = z.object({
   })).min(1),
 }).passthrough();
 
+function normalizeBlock(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const block = value as Record<string, unknown>;
+  let type = typeof block.type === "string" ? block.type : "paragraph";
+  let contentType = typeof block.contentType === "string" ? block.contentType : undefined;
+  let content = block.content;
+  if (typeof content === "string") {
+    let text = content;
+    const fenced = text.trim().match(/^```(mermaid|plantuml|latex|tex|json)\s*\n([\s\S]*?)\n?```$/i);
+    if (fenced) {
+      const language = fenced[1].toLowerCase();
+      text = fenced[2].trim();
+      contentType = language === "tex" ? "latex" : language;
+      if (language === "mermaid" || language === "plantuml") type = "diagram";
+      else if (language === "latex" || language === "tex") type = "formula";
+      else type = "json";
+    } else if (!contentType && /^(?:\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\))$/.test(text.trim())) {
+      contentType = "latex";
+      type = "formula";
+      text = text.trim().replace(/^(?:\$\$?|\\\[|\\\()\s*/, "").replace(/\s*(?:\$\$?|\\\]|\\\))$/, "");
+    } else if (!contentType && type.toLowerCase() === "diagram" && /^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|mindmap|journey|requirementDiagram)\b/.test(text.trim())) {
+      contentType = "mermaid";
+    }
+    if (contentType === "latex" || ["formula", "math", "equation"].includes(type.toLowerCase())) {
+      contentType = "latex";
+      type = "formula";
+      text = text.trim().replace(/^(?:\$\$?|\\\[|\\\()\s*/, "").replace(/\s*(?:\$\$?|\\\]|\\\))$/, "");
+    }
+    if (contentType === "json" || type.toLowerCase() === "json") {
+      contentType = "json";
+      type = "json";
+      try { content = JSON.parse(text); } catch { content = text; /* keep a tagged JSON string so the UI never mistakes it for prose */ }
+    } else if (!contentType && /^[\[{][\s\S]*[\]}]$/.test(text.trim())) {
+      try {
+        const structured = JSON.parse(text);
+        if (structured !== null && typeof structured === "object") {
+          content = structured;
+          contentType = Array.isArray(structured) ? "json" : "json";
+          type = "json";
+        }
+      } catch { /* ordinary prose that happens to use brackets remains text */ }
+    }
+    if (typeof content === "string") content = text;
+  }
+  return { ...block, type, content, ...(contentType ? { contentType } : {}) };
+}
+
+export function normalizeResult(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const result = value as Record<string, unknown>;
+  if (!Array.isArray(result.sections)) return value;
+  return {
+    ...result,
+    sections: result.sections.map(section => {
+      if (!section || typeof section !== "object" || Array.isArray(section)) return section;
+      const current = section as Record<string, unknown>;
+      return { ...current, ...(Array.isArray(current.blocks) ? { blocks: current.blocks.map(normalizeBlock) } : {}) };
+    }),
+  };
+}
+
 export function assertResult(value: unknown) {
-  const parsed = resultSchema.safeParse(value);
+  const parsed = resultSchema.safeParse(normalizeResult(value));
   if (!parsed.success) throw new ApiError(422, "INVALID_LLM_OUTPUT", "LLM trả kết quả không đúng cấu trúc sections/blocks.", parsed.error.issues);
   return parsed.data;
 }
@@ -43,4 +108,10 @@ export function safeBody<T>(schema: z.ZodType<T>, value: unknown): T {
   const parsed = schema.safeParse(value);
   if (!parsed.success) throw new ApiError(400, "INVALID_REQUEST", "Dữ liệu gửi lên không hợp lệ.", parsed.error.issues);
   return parsed.data;
+}
+
+export function assertHasAnalysisInput(text: string | undefined, multipartFileCount: number, stagedFileCount: number) {
+  if (!text?.trim() && multipartFileCount === 0 && stagedFileCount === 0) {
+    throw new ApiError(400, "INPUT_REQUIRED", "Dán nội dung hoặc tải lên ít nhất một tệp.");
+  }
 }
