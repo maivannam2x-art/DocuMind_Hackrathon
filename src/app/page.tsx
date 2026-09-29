@@ -462,12 +462,12 @@ export default function Home() {
         if (diagrams.length) {
           setLoadingLabel("Đang chuẩn bị ảnh sơ đồ cho báo cáo...");
           const { default: mermaid } = await import("mermaid");
-          mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "neutral" });
+          mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "neutral", suppressErrorRendering: true });
           let sourceOnly = Math.max(0, diagrams.length - 24);
           for (const [index, source] of diagrams.slice(0, 24).entries()) {
             try {
               if (source.length > 10000 || !(await mermaid.parse(source, { suppressErrors: true }))) { sourceOnly++; continue; }
-              const { svg } = await mermaid.render(`export-diagram-${Date.now()}-${index}`, source);
+              const { svg } = await mermaid.render(`export-diagram-${Date.now()}-${index}`, source, document.createElement("div"));
               await api(`/api/analyses/${analysisId}/assets`, {
                 method: "POST", body: JSON.stringify({ resultId, assetType: "mermaid", source, svg, title: "Sơ đồ báo cáo" }),
               });

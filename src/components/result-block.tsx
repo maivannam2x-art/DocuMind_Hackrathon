@@ -15,10 +15,12 @@ function MermaidDiagram({ source, analysisId, resultId }: { source: string; anal
     if (!opened || !source.trim() || source.length > 10000) return;
     let current = true;
     import("mermaid").then(async ({ default: mermaid }) => {
-      mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "neutral" });
+      mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "neutral", suppressErrorRendering: true });
       const parsed = await mermaid.parse(source, { suppressErrors: true });
       if (!parsed) throw new Error("Invalid Mermaid source");
-      return mermaid.render(id, source);
+      // Mermaid otherwise inserts its giant error diagram into document.body
+      // when a source parses but fails during drawing. Keep its work detached.
+      return mermaid.render(id, source, document.createElement("div"));
     }).then(({ svg: rendered }) => {
       if (current) setSvg(rendered);
     }).catch(() => {
