@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { chunkText, extractFile, mimeTypeForFilename, normalizeText } from "@/lib/documents";
+import { Document, Packer, Paragraph } from "docx";
+import { reportToPdf } from "@/lib/report";
 
 const originalProvider = process.env.LLM_PROVIDER;
 const originalKey = process.env.GEMINI_API_KEY;
@@ -86,5 +88,17 @@ describe("document preparation", () => {
     expect(chunks.every(chunk => chunk.content.length <= 200)).toBe(true);
     if (previous.limit === undefined) delete process.env.MAX_CHUNK_CHARS; else process.env.MAX_CHUNK_CHARS = previous.limit;
     if (previous.overlap === undefined) delete process.env.CHUNK_OVERLAP_CHARS; else process.env.CHUNK_OVERLAP_CHARS = previous.overlap;
+  });
+
+  it("extracts real PDF and DOCX IT documents, then chunks their text", async () => {
+    const paragraph = "TCP connection handshake uses SYN, SYN-ACK, and ACK before ESTABLISHED. ";
+    const docx = await Packer.toBuffer(new Document({ sections: [{ children: [new Paragraph({ text: paragraph.repeat(30) })] }] }));
+    const docxResult = await extractFile(new File([Uint8Array.from(docx)], "network.docx"));
+    expect(docxResult.text).toContain("SYN-ACK");
+    expect(chunkText(docxResult.text).length).toBeGreaterThan(0);
+
+    const pdf = await reportToPdf({ title: "Mạng máy tính", sections: [{ title: "TCP", blocks: [{ type: "paragraph", content: paragraph.repeat(10) }] }] });
+    const pdfResult = await extractFile(new File([Uint8Array.from(pdf)], "network.pdf"));
+    expect(pdfResult.text).toContain("SYN-ACK");
   });
 });

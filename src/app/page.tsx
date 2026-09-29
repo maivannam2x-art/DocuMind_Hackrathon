@@ -417,10 +417,31 @@ export default function Home() {
     if (!analysisId) return;
     setBusy(true); setError("");
     try {
+      if (["pdf", "docx", "html"].includes(format) && resultId && result) {
+        const diagrams = Array.from(new Set(result.sections.flatMap(section => section.blocks)
+          .filter(block => block.contentType === "mermaid" || block.type === "mermaid" || (block.type === "diagram" && !block.contentType && typeof block.content === "string" && /^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|mindmap|journey)\b/.test(block.content.trim())))
+          .map(block => typeof block.content === "string" ? block.content.trim() : "").filter(Boolean)));
+        if (diagrams.length) {
+          setLoadingLabel("Đang chuẩn bị ảnh sơ đồ cho báo cáo...");
+          const { default: mermaid } = await import("mermaid");
+          mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "neutral" });
+          for (const [index, source] of diagrams.entries()) {
+            try {
+              const { svg } = await mermaid.render(`export-diagram-${Date.now()}-${index}`, source);
+              await api(`/api/analyses/${analysisId}/assets`, {
+                method: "POST", body: JSON.stringify({ resultId, assetType: "mermaid", source, svg, title: "Sơ đồ báo cáo" }),
+              });
+            } catch {
+              throw new Error("Không dựng hoặc lưu được sơ đồ cho báo cáo. Hãy kiểm tra mã Mermaid trong phần Chi tiết rồi thử lại.");
+            }
+          }
+        }
+      }
+      setLoadingLabel("Đang tạo tệp báo cáo...");
       const response = await api<{ downloadUrl: string }>(`/api/analyses/${analysisId}/exports`, { method: "POST", body: JSON.stringify({ format }) });
       window.location.assign(response.downloadUrl);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Không xuất được tài liệu."); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setLoadingLabel(""); }
   }
 
   function addFiles(accepted: File[]) {

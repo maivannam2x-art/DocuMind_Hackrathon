@@ -109,7 +109,10 @@ export async function extractFile(file: File): Promise<ExtractedFile> {
       text = visual.text;
       metadata = visual.metadata;
     } else if (extension === "pdf") {
-      text = (await pdfParse(buffer)).text;
+      // pdf-parse 1.x corrupts the cross-reference offset when handed a Node
+      // Buffer on current runtimes. Its PDF.js engine handles plain Uint8Array.
+      // The published TypeScript declaration incorrectly requires Buffer.
+      text = (await pdfParse(new Uint8Array(buffer) as Buffer)).text;
       if (normalizeText(text).length < 40) {
         const visual = await extractVisual(buffer, expectedMime, name);
         text = visual.text;

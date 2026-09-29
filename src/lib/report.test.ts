@@ -23,6 +23,13 @@ describe("report export formats", () => {
     expect(reportToHtml(report)).toContain("Báo cáo cơ sở dữ liệu");
   });
 
+  it("renders formulas as MathML in standalone HTML exports", () => {
+    const html = reportToHtml({ title: "Độ trễ TCP", sections: [{ title: "RTT", blocks: [{ type: "formula", contentType: "latex", content: "RTT=t_2-t_1" }] }] });
+    expect(html).toContain("<math");
+    expect(html).toContain("formula-export");
+    expect(html).not.toContain("<pre class=\"source\">RTT=t_2-t_1");
+  });
+
   it("embeds rendered diagram previews in HTML and native images in PDF and Word", async () => {
     const pixelPng = (await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect width="4" height="4" fill="#6248dc"/></svg>')).png().toBuffer()).toString("base64");
     const imageReport = {

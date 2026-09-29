@@ -1,6 +1,7 @@
 import path from "node:path";
 import PDFDocument from "pdfkit";
 import { Document, HeadingLevel, ImageRun, Packer, Paragraph } from "docx";
+import katex from "katex";
 import { blockToPlainText, type ResultBlock } from "@/lib/result-content";
 
 export type ReportSection = { title: string; summary?: string; blocks: ResultBlock[] };
@@ -58,6 +59,15 @@ export function reportToMarkdown(report: ReportDocument) {
 function htmlBlock(block: ResultBlock) {
   const text = blockToPlainText(block);
   if (isList(block)) return `<ul>${(Array.isArray(block.content) ? block.content : [block.content]).map(item => `<li>${escapeHtml(String(item))}</li>`).join("")}</ul>`;
+  if (block.contentType === "latex" || ["formula", "math", "equation"].includes(block.type)) {
+    const math = typeof block.metadata?.latex === "string" ? block.metadata.latex : text;
+    const normalized = math.trim().replace(/^\$\$?|\$\$?$/g, "");
+    try {
+      return `<figure class="formula-export"><figcaption>CÔNG THỨC</figcaption>${katex.renderToString(normalized, { output: "mathml", displayMode: true, throwOnError: true, trust: false })}</figure>`;
+    } catch {
+      return `<div class="block"><span class="label">CÔNG THỨC · LaTeX</span><pre class="source">${escapeHtml(math)}</pre></div>`;
+    }
+  }
   const label = block.contentType === "json" || block.type === "json" ? "JSON · dữ liệu có cấu trúc" : block.contentType || block.type.replaceAll("_", " ");
   const inlineSvg = typeof block.metadata?.inlineSvgBase64 === "string" ? block.metadata.inlineSvgBase64 : "";
   if (inlineSvg && (block.contentType === "mermaid" || block.type === "mermaid" || block.type === "diagram")) {
@@ -70,7 +80,7 @@ function htmlBlock(block: ResultBlock) {
 export function reportToHtml(report: ReportDocument) {
   const conclusion = report.conclusion ? `<section class="report-conclusion"><h2>Kết luận</h2><p>${escapeHtml(report.conclusion)}</p></section>` : "";
   const sections = (report.sections ?? []).map(section => `<section><h2>${escapeHtml(section.title)}</h2>${section.summary ? `<p class="section-summary">${escapeHtml(section.summary)}</p>` : ""}${(section.blocks ?? []).map(htmlBlock).join("")}</section>`).join("");
-  return `<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${escapeHtml(report.title || "Báo cáo học tập")}</title><style>body{font:16px/1.65 Arial,sans-serif;color:#202235;max-width:920px;margin:48px auto;padding:0 24px}header{border-bottom:1px solid #e4e5ed;padding-bottom:24px;margin-bottom:28px}h1{font-size:32px;margin:0 0 10px}h2{font-size:22px;margin:0 0 12px}section{margin:30px 0}.section-summary{color:#62667b}.report-conclusion{padding:18px;border-left:3px solid #7965dc;background:#f8f7ff;border-radius:0 10px 10px 0}.block{margin:14px 0}.label{display:block;text-transform:uppercase;letter-spacing:.08em;font-size:11px;color:#7060c7;font-weight:700;margin-bottom:7px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f6f7fb;border-radius:8px;padding:14px;font:14px/1.65 ui-monospace,monospace}.content{background:transparent;padding:0;font:inherit}ul{padding-left:24px}.diagram-export{margin:18px 0;padding:16px;border:1px solid #e7e5ef;border-radius:10px;break-inside:avoid}.diagram-export img{display:block;width:100%;height:auto;max-height:720px;object-fit:contain}.diagram-export figcaption{font-size:11px;color:#7060c7;font-weight:700;margin-bottom:12px}.diagram-export details{margin-top:12px;font-size:12px}@media print{body{margin:0 auto;padding:0 8mm}section{break-inside:avoid}}</style></head><body><header><h1>${escapeHtml(report.title || "Báo cáo học tập")}</h1>${report.summary ? `<p>${escapeHtml(report.summary)}</p>` : ""}</header>${conclusion}${sections}</body></html>`;
+  return `<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${escapeHtml(report.title || "Báo cáo học tập")}</title><style>body{font:16px/1.65 Arial,sans-serif;color:#202235;max-width:920px;margin:48px auto;padding:0 24px}header{border-bottom:1px solid #e4e5ed;padding-bottom:24px;margin-bottom:28px}h1{font-size:32px;margin:0 0 10px}h2{font-size:22px;margin:0 0 12px}section{margin:30px 0}.section-summary{color:#62667b}.report-conclusion{padding:18px;border-left:3px solid #7965dc;background:#f8f7ff;border-radius:0 10px 10px 0}.block{margin:14px 0}.label{display:block;text-transform:uppercase;letter-spacing:.08em;font-size:11px;color:#7060c7;font-weight:700;margin-bottom:7px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f6f7fb;border-radius:8px;padding:14px;font:14px/1.65 ui-monospace,monospace}.content{background:transparent;padding:0;font:inherit}ul{padding-left:24px}.diagram-export,.formula-export{margin:18px 0;padding:16px;border:1px solid #e7e5ef;border-radius:10px;break-inside:avoid}.diagram-export img{display:block;width:100%;height:auto;max-height:720px;object-fit:contain}.diagram-export figcaption,.formula-export figcaption{font-size:11px;color:#7060c7;font-weight:700;margin-bottom:12px}.formula-export math{display:block;font-size:1.35em}.diagram-export details{margin-top:12px;font-size:12px}@media print{body{margin:0 auto;padding:0 8mm}section{break-inside:avoid}}</style></head><body><header><h1>${escapeHtml(report.title || "Báo cáo học tập")}</h1>${report.summary ? `<p>${escapeHtml(report.summary)}</p>` : ""}</header>${conclusion}${sections}</body></html>`;
 }
 
 export async function reportToPdf(report: ReportDocument): Promise<Buffer> {

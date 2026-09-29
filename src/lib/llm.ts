@@ -143,11 +143,21 @@ function mockResponse(request: LlmRequest): unknown {
   const body = prompt.match(/Nội dung:\s*([\s\S]+)$/)?.[1] ?? prompt;
   const lines = body.split(/\n+/).map(value => value.trim()).filter(Boolean);
   const title = lines[0]?.replace(/^#+\s*/, "").slice(0, 100) || "Nội dung tài liệu";
-  const paragraphs = lines.filter(line => line !== lines[0]).slice(0, 4);
-  const content = paragraphs.length ? paragraphs.join("\n\n") : body.slice(0, 1500);
+  // Demo mode must retain the source of each chunk so long documents do not
+  // silently lose everything after the first four lines.
+  const paragraphs = lines.filter((line, index) => index > 0);
+  const content = body.slice(0, 12000);
+  const visualBlocks: Array<{ type: string; contentType: string; content: string }> = [];
+  for (const match of body.matchAll(/```(mermaid|plantuml|latex|tex)\s*\n([\s\S]*?)```/gi)) {
+    const language = match[1].toLowerCase();
+    visualBlocks.push({ type: language === "latex" || language === "tex" ? "formula" : "diagram", contentType: language === "tex" ? "latex" : language, content: match[2].trim() });
+  }
+  for (const match of body.matchAll(/\$\$([\s\S]*?)\$\$/g)) {
+    if (match[1].trim()) visualBlocks.push({ type: "formula", contentType: "latex", content: match[1].trim() });
+  }
   const sections = [
     { title: "Ý chính", summary: "Các ý trọng tâm được rút ra từ phần tài liệu này.", blocks: [{ type: "summary", content }] },
-    { title: "Giải thích", blocks: [{ type: "paragraph", content: `Phần này diễn giải nội dung “${title}” theo cách ngắn gọn, bám sát nguồn đầu vào.` }, { type: "key_points", content: paragraphs.slice(0, 3) }] },
+    { title: "Nội dung và cấu trúc", blocks: [{ type: "paragraph", content: `Trích nội dung nguồn thuộc phần “${title}”.` }, { type: "key_points", content: paragraphs.slice(0, 8) }, ...visualBlocks] },
   ];
-  return { title, summary: `Tóm tắt phần ${title} dựa trên nội dung đã cung cấp.`, sections };
+  return { title, summary: `Bản mô phỏng: nội dung nguồn của phần ${title}. Cần Gemini để có phân tích chuyên sâu.`, sections };
 }

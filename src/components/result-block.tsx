@@ -2,6 +2,7 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import katex from "katex";
+import { getSupabaseAccessToken } from "@/lib/supabase-browser";
 import { scalarText, type ResultBlock } from "@/lib/result-content";
 
 function MermaidDiagram({ source, analysisId, resultId }: { source: string; analysisId?: string; resultId?: string }) {
@@ -26,12 +27,17 @@ function MermaidDiagram({ source, analysisId, resultId }: { source: string; anal
     const key = `${analysisId}:${resultId}:${source}`;
     if (persistedKey.current === key) return;
     let current = true;
-    void fetch(`/api/analyses/${analysisId}/assets`, {
+    let isGuestAnalysis = false;
+    try {
+      const ids = JSON.parse(sessionStorage.getItem("documind:guest-analysis-ids") ?? "[]") as unknown;
+      isGuestAnalysis = Array.isArray(ids) && ids.includes(analysisId);
+    } catch { /* A guest cookie can still authorize the request. */ }
+    void (isGuestAnalysis ? Promise.resolve(null) : getSupabaseAccessToken()).then(token => fetch(`/api/analyses/${analysisId}/assets`, {
       method: "POST",
       credentials: "include",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify({ resultId, assetType: "mermaid", source, svg, title: "Sơ đồ trong kết quả phân tích" }),
-    }).then(response => {
+    })).then(response => {
       if (response.ok && current) persistedKey.current = key;
     }).catch(() => undefined);
     return () => { current = false; };
