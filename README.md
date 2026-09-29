@@ -4,10 +4,11 @@ Backend for DocuMind's IT document-to-learning flow. The active topic catalog fo
 
 ## Setup
 
-1. Copy .env.example to .env.local and fill the Supabase URL, anon key and server-only service-role key.
+1. Copy .env.example to .env.local and set `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (or the legacy anon key), and the server-only `SUPABASE_SERVICE_ROLE_KEY`.
 2. Apply all SQL files in supabase/migrations in filename order. Seeds include topics, validation rules and versioned prompt templates; private buckets are created by the first migration.
-3. Run npm install, then npm run dev.
-4. LLM_PROVIDER=mock is the default and exercises the complete flow without keys. Set LLM_PROVIDER=gemini and add GEMINI_API_KEY to enable Gemini.
+3. In Supabase Auth URL Configuration, set the Site URL to the deployed origin and allow `http://localhost:3000/auth/callback` plus `https://docu-mind-hackrathon.vercel.app/auth/callback` as redirect URLs for email verification.
+4. Run npm install, then npm run dev.
+5. LLM_PROVIDER=mock is the default and exercises the complete flow without keys. Set LLM_PROVIDER=gemini and add GEMINI_API_KEY to enable Gemini.
 
 Never expose SUPABASE_SERVICE_ROLE_KEY or GEMINI_API_KEY in client-side code.
 
@@ -25,6 +26,7 @@ The result workspace has separate overview, summary, detailed analysis, interact
 
 - GET /api/health, GET /api/topics
 - GET /api/prompts
+- GET/PATCH /api/profile (authenticated)
 - POST /api/analyses, GET /api/analyses
 - GET /api/analyses/:id, POST /validate, PATCH /review, POST /confirm, POST /run, GET /result
 - GET /api/analyses/:id/quiz, POST /quiz/attempts
@@ -32,6 +34,8 @@ The result workspace has separate overview, summary, detailed analysis, interact
 - POST /api/analyses/:id/exports (`pdf`, `docx`, `markdown`, `html`, `json`)
 
 Guest requests receive an HttpOnly dm_guest cookie. Guest data stops being accessible at its expiry time; the scheduled cleanup then removes expired rows and stored files. Configure CRON_SECRET in the hosting environment for cleanup. Authenticated history is scoped by Supabase Auth user ID. Public clients cannot modify analysis state or read quiz answers directly.
+
+Users can sign up with email/password, verify email through `/auth/callback`, sign in, edit their display name and username, and sign out locally. Active guest analyses keep using their guest cookie if a user signs in before finishing; new analyses created while signed in are owned by the account.
 
 After confirmation, topic routing uses specialized IT prompts when the source supports an IT classification. Documents outside IT or without enough evidence use global fallback prompts for analysis, quizzes, chat, and JSON repair. These prompts stay grounded in the source and avoid claiming the same depth as IT-specific prompts. Results record `metadata.promptScope` as `it_specialized` or `general_fallback` and include the detected topic label.
 

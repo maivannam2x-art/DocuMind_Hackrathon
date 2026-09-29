@@ -1,15 +1,18 @@
 "use client";
 
 import { ChangeEvent, FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import type { User } from "@supabase/supabase-js";
 import { ResultBlockView } from "@/components/result-block";
+import { AuthDialog } from "@/components/auth-dialog";
 import { blockToPlainText, type ResultBlock } from "@/lib/result-content";
+import { getSupabaseAccessToken, getSupabaseBrowserClient, hasSupabaseBrowserConfig } from "@/lib/supabase-browser";
 
 type Topic = { id: string; code: string; name: string; specializations: Array<{ id: string; name: string; parent_id: string | null; description?: string }> };
 type ApiInput = { id: string; original_name: string; edited_text?: string | null; normalized_text?: string | null; original_text?: string | null; status?: string; metadata?: Record<string, unknown>; previewUrl?: string | null };
 type OutlineItem = { chunkIndex: number; title: string; preview: string };
 type InputReport = { id: string; name: string; characters: number; words: number; chunkCount: number; structure: OutlineItem[] };
 type ValidationReport = { valid: boolean; totalCharacters: number; totalWords: number; inputCount: number; chunkCount: number; blockingErrors: Array<{ message: string }>; warnings: Array<{ message: string }>; notes: Array<{ message: string }>; inputs: InputReport[] };
-type Analysis = { id: string; title: string; status: string; confirmed_at?: string | null; topic_id?: string | null; specialization_id?: string | null; custom_prompt?: string | null; quiz_enabled?: boolean; validation_report?: ValidationReport; created_at?: string; updated_at?: string; completed_at?: string | null; error_code?: string | null; error_message?: string | null };
+type Analysis = { id: string; title: string; status: string; user_id?: string | null; confirmed_at?: string | null; topic_id?: string | null; specialization_id?: string | null; custom_prompt?: string | null; quiz_enabled?: boolean; validation_report?: ValidationReport; created_at?: string; updated_at?: string; completed_at?: string | null; error_code?: string | null; error_message?: string | null };
 type HistoryRow = Pick<Analysis, "id" | "title" | "status" | "quiz_enabled" | "created_at" | "updated_at" | "completed_at" | "error_code">;
 type Block = ResultBlock;
 type Section = { title: string; summary?: string; blocks: Block[] };
@@ -20,9 +23,33 @@ type QuizFeedback = { questionId: string; correct: boolean; answer: unknown; exp
 type SignedUpload = { inputId: string; name: string; signedUrl: string; mimeType: string; file: File };
 
 const steps = ["Tài liệu", "Kiểm tra", "Xử lý", "Kết quả"];
+const GUEST_ANALYSIS_STORAGE_KEY = "documind:guest-analysis-ids";
+
+function hasGuestAnalysisContext(path: string) {
+  if (typeof window === "undefined") return false;
+  const id = path.match(/^\/api\/analyses\/([^/?]+)/)?.[1];
+  if (!id) return false;
+  try {
+    const ids = JSON.parse(window.sessionStorage.getItem(GUEST_ANALYSIS_STORAGE_KEY) ?? "[]") as unknown;
+    return Array.isArray(ids) && ids.includes(id);
+  } catch { return false; }
+}
+
+function rememberGuestAnalysis(id: string) {
+  try {
+    const ids = JSON.parse(window.sessionStorage.getItem(GUEST_ANALYSIS_STORAGE_KEY) ?? "[]") as unknown;
+    const next = Array.isArray(ids) ? ids.filter((value): value is string => typeof value === "string") : [];
+    if (!next.includes(id)) next.push(id);
+    window.sessionStorage.setItem(GUEST_ANALYSIS_STORAGE_KEY, JSON.stringify(next.slice(-20)));
+  } catch { /* Private browsing can disable sessionStorage; the active guest cookie remains available. */ }
+}
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, { ...init, credentials: "include", headers: { ...(init?.body instanceof FormData ? {} : { "content-type": "application/json" }), ...init?.headers } });
+  const token = hasGuestAnalysisContext(path) ? null : await getSupabaseAccessToken();
+  const headers = new Headers(init?.headers);
+  if (!(init?.body instanceof FormData) && !headers.has("content-type")) headers.set("content-type", "application/json");
+  if (token) headers.set("authorization", `Bearer ${token}`);
+  const response = await fetch(path, { ...init, credentials: "include", headers });
   const payload = await response.json().catch(() => ({})) as { data?: T; error?: { message?: string; details?: unknown } };
   if (!response.ok) throw new Error(payload.error?.message ?? `Yêu cầu thất bại (${response.status}).`);
   return payload.data as T;
@@ -78,6 +105,9 @@ export default function Home() {
   const [loadingLabel, setLoadingLabel] = useState("");
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
+  const [authUser, setAuthUser] = useState<User | null>(null);
+  const [authReady, setAuthReady] = useState(false);
+  const [authMode, setAuthMode] = useState<"sign-in" | "sign-up" | "profile" | null>(null);
 
   const selectedTopic = useMemo(() => topics.find(topic => topic.code === "IT"), [topics]);
   const selectedSpecialization = useMemo(() => selectedTopic?.specializations.find(item => item.id === specializationId), [selectedTopic, specializationId]);
@@ -88,6 +118,46 @@ export default function Home() {
   useEffect(() => {
     api<{ data: Topic[] }>("/api/topics").then(response => setTopics(response.data ?? [])).catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    if (!hasSupabaseBrowserConfig()) {
+      setAuthReady(true);
+      return;
+    }
+    const client = getSupabaseBrowserClient();
+    let active = true;
+    const { data: { subscription } } = client.auth.onAuthStateChange((event, session) => {
+      setAuthUser(session?.user ?? null);
+      setAuthReady(true);
+      if (event === "SIGNED_OUT") {
+        setAnalysisId(null); setAnalysis(null); setResultId(null); setResult(null); setHistory([]);
+        setScreen("input"); setActiveResultTab("overview"); setQuizQuestions([]); setChat([]);
+        setToast("Đã đăng xuất. Phiên học riêng của tài khoản đã được đóng.");
+      }
+    });
+    void client.auth.getSession().then(({ data, error: sessionError }) => {
+      if (!active) return;
+      setAuthUser(data.session?.user ?? null);
+      setAuthReady(true);
+      if (sessionError) setToast("Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại để mở lịch sử.");
+    });
+    return () => { active = false; subscription.unsubscribe(); };
+  }, []);
+
+  async function signOutFromHeader() {
+    setError("");
+    try {
+      const { error: signOutError } = await getSupabaseBrowserClient().auth.signOut({ scope: "local" });
+      if (signOutError) throw signOutError;
+    } catch {
+      setError("Không thể đăng xuất lúc này. Kiểm tra kết nối rồi thử lại.");
+    }
+  }
+
+  const accountName = typeof authUser?.user_metadata?.display_name === "string" && authUser.user_metadata.display_name.trim()
+    ? authUser.user_metadata.display_name.trim()
+    : authUser?.email ?? "Tài khoản DocuMind";
+  const accountInitial = accountName.trim().charAt(0).toUpperCase() || "D";
 
   const loadResult = useCallback(async (id: string, analysisData?: Analysis) => {
     const resultResponse = await api<{ analysis: Analysis; result: { id: string; result_json: ResultJson } }>(`/api/analyses/${id}/result`);
@@ -191,6 +261,7 @@ export default function Home() {
         }),
       });
       setAnalysisId(created.analysis.id); setAnalysis(created.analysis);
+      if (!created.analysis.user_id) rememberGuestAnalysis(created.analysis.id);
       const uploads: SignedUpload[] = created.uploads.map((upload, index) => ({ ...upload, file: files[index] })).filter(upload => Boolean(upload.file));
       if (uploads.length) {
         setPendingUploads(uploads);
@@ -377,13 +448,17 @@ export default function Home() {
         </nav>
         <div className="sidebar-spacer" />
         <div className="sidebar-tip"><div className="tip-icon">✦</div><strong>Tài liệu của bạn</strong><p>được lưu theo từng phiên để tiếp tục học bất cứ lúc nào.</p><button onClick={() => void loadHistory()}>Xem lịch sử <span>→</span></button></div>
-        <div className="profile-row"><div className="avatar">DM</div><div><strong>Không gian cá nhân</strong><small>Khách hoặc tài khoản</small></div><span className="profile-dots">•••</span></div>
+        <button type="button" className="profile-row" onClick={() => setAuthMode(authUser ? "profile" : "sign-in")} aria-label={authUser ? "Mở hồ sơ tài khoản" : "Đăng nhập hoặc đăng ký"}>
+          <div className="avatar">{authUser ? accountInitial : "DM"}</div><div><strong>{authUser ? accountName : "Đang dùng với tư cách khách"}</strong><small>{authUser ? authUser.email : "Đăng nhập để lưu lịch sử"}</small></div><span className="profile-dots">{authUser ? "⌄" : "↗"}</span>
+        </button>
       </aside>
 
       <section className="main-area">
         <header className="topbar">
           <div className="breadcrumbs"><span>DocuMind</span><b>/</b><strong>{screen === "result" ? analysis?.title ?? "Workspace" : screen === "review" ? "Kiểm tra đầu vào" : screen === "history" ? "Lịch sử" : "Phân tích mới"}</strong></div>
-          <div className="top-actions"><span className="save-state"><i />{screen === "result" ? "Đã lưu thay đổi" : "Mọi thay đổi được lưu theo phiên"}</span><button className="help-button" title="Trợ giúp" onClick={() => setToast("Luồng gồm nhập tài liệu, kiểm tra, xác nhận xử lý và xem kết quả.")}>?</button></div>
+          <div className="top-actions"><span className="save-state"><i />{screen === "result" ? "Đã lưu thay đổi" : "Mọi thay đổi được lưu theo phiên"}</span>
+            {authUser ? <><button type="button" className="auth-account-button" onClick={() => setAuthMode("profile")} title="Hồ sơ tài khoản"><span className="auth-avatar">{accountInitial}</span><span className="auth-account-name">{accountName}</span></button><button type="button" className="auth-logout-button" onClick={() => void signOutFromHeader()}>Đăng xuất</button></> : <><button type="button" className="auth-login-button" onClick={() => setAuthMode("sign-in")} disabled={!authReady}>Đăng nhập</button><button type="button" className="auth-signup-button" onClick={() => setAuthMode("sign-up")} disabled={!authReady}>Tạo tài khoản</button></>}
+            <button className="help-button" title="Trợ giúp" onClick={() => setToast("Luồng gồm nhập tài liệu, kiểm tra, xác nhận xử lý và xem kết quả.")}>?</button></div>
         </header>
 
         <div className="page-content">
@@ -494,6 +569,7 @@ export default function Home() {
         </div>
         <footer className="app-footer"><span>© 2026 DocuMind</span><span><i />Hệ thống học tập từ tài liệu</span><button onClick={() => setToast("Tài liệu chỉ được phân tích sau khi bạn xác nhận.")}>Quyền riêng tư</button></footer>
       </section>
+      {authMode && <AuthDialog key={authMode} initialMode={authMode} email={authUser?.email ?? undefined} onClose={() => setAuthMode(null)} onAuthenticated={() => setToast(authMode === "profile" ? "Hồ sơ đã cập nhật." : "Bạn đã đăng nhập vào DocuMind.")} />}
     </main>
   );
 }
