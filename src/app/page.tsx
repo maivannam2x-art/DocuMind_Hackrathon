@@ -216,6 +216,15 @@ export default function Home() {
     setScreen("review");
   }, []);
 
+  async function ingestAllFiles(id: string) {
+    let nextStep: string;
+    do {
+      const response = await api<{ nextStep: string; remainingFiles: number }>(`/api/analyses/${id}/ingest`, { method: "POST" });
+      nextStep = response.nextStep;
+      if (nextStep === "ingest") setLoadingLabel(`Đang đọc tệp tiếp theo · còn ${response.remainingFiles} tệp...`);
+    } while (nextStep === "ingest");
+  }
+
   async function completeFileUploadAndReview(id: string, uploads: SignedUpload[]) {
     for (const upload of uploads) {
       const response = await fetch(upload.signedUrl, {
@@ -228,7 +237,7 @@ export default function Home() {
     }
     setPendingIngestId(id);
     setLoadingLabel("Đang trích xuất văn bản, công thức và sơ đồ từ tệp...");
-    await api(`/api/analyses/${id}/ingest`, { method: "POST" });
+    await ingestAllFiles(id);
     setPendingIngestId(null);
     await refreshReview(id);
     setPendingUploads([]);
@@ -243,7 +252,7 @@ export default function Home() {
       if (pendingUploads.length) await completeFileUploadAndReview(analysisId, pendingUploads);
       else {
         setLoadingLabel("Đang trích xuất lại nội dung tệp...");
-        await api(`/api/analyses/${analysisId}/ingest`, { method: "POST" });
+        await ingestAllFiles(analysisId);
         setPendingIngestId(null);
         await refreshReview(analysisId);
         setFiles([]); setText("");

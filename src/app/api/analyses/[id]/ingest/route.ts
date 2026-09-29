@@ -31,8 +31,11 @@ export async function POST(request: NextRequest, context: Context) {
       .eq("analysis_id", id).in("status", ["staged", "error"]).order("position");
     if (error) throw new ApiError(500, "INPUT_LOAD_FAILED", "Không tải được danh sách tệp.", error.message);
 
+    const remaining = (inputs ?? []) as InputRow[];
     const completed: Array<{ id: string; name: string; characters: number; extraction: unknown }> = [];
-    for (const input of (inputs ?? []) as InputRow[]) {
+    // Each request extracts one file. OCR for ten images must not occupy one
+    // Vercel function for ten model calls; the client resumes the next file.
+    for (const input of remaining.slice(0, 1)) {
       if (!input.storage_bucket || !input.storage_path) {
         throw new ApiError(422, "FILE_UPLOAD_INCOMPLETE", `Tệp ${input.original_name} chưa được tải lên đầy đủ. Hãy chọn tải lại tệp.`);
       }
@@ -62,7 +65,7 @@ export async function POST(request: NextRequest, context: Context) {
         throw cause;
       }
     }
-    return ok({ analysisId: id, inputs: completed, nextStep: "validate" });
+    return ok({ analysisId: id, inputs: completed, nextStep: remaining.length > 1 ? "ingest" : "validate", remainingFiles: Math.max(0, remaining.length - 1) });
   } catch (error) {
     return errorResponse(error);
   }
