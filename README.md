@@ -49,7 +49,7 @@ Keep the returned analysis ID, then send the same cookie jar through validate, r
 
 Supported inputs include PDF, DOCX, TXT, Markdown, JSON, common IT source-code formats, PNG, JPG, and JPEG. Text-layer PDFs and DOCX files are parsed locally. Scanned PDFs and raster images use Gemini Vision. DOCX OCR inspects up to three embedded PNG/JPEG images. The review screen shows an image preview and editable extracted text so users can correct OCR before confirming analysis.
 
-LaTeX formulas render with KaTeX. Mermaid diagrams render in the result view with strict security settings and are stored as private SVG assets. HTML exports embed the saved SVG, while PDF and Word exports embed PNG renderings if the result view has persisted them; otherwise the structured data retains the diagram source. Apply `20260929045405_documind_visual_assets.sql` to create the private `analysis-assets` bucket. The browser only receives short-lived signed asset/upload URLs; server-only Supabase credentials remain on the server.
+LaTeX formulas render with KaTeX. Mermaid diagrams render in the result view with strict security settings and are stored as private SVG assets. HTML exports embed the saved SVG, while PDF and Word exports embed PNG renderings if the result view has persisted them; otherwise the structured data retains the diagram source. Apply `20260929051348_documind_visual_assets.sql` to create the private `analysis-assets` bucket. The browser only receives short-lived signed asset/upload URLs; server-only Supabase credentials remain on the server.
 
 ## Data model
 
