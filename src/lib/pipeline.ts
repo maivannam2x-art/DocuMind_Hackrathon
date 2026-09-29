@@ -5,6 +5,7 @@ import { ApiError } from "@/lib/http";
 import { assertResult } from "@/lib/validation";
 import { generateLlm, loadPrompt, type LlmPurpose, type LlmResult } from "@/lib/llm";
 import { createSourceGroundedFallback, normalizeQuizCandidates, type QuizCandidate } from "@/lib/quiz";
+import { fallbackOverview, summaryContext, validatedOverview, type SummarySection } from "@/lib/overview";
 
 export type ChunkRow = { id: string; input_id: string; chunk_index: number; title: string | null; content: string; status: string; retry_count: number; generated_content?: unknown };
 type PromptRow = { id: string; system_prompt: string; user_prompt_template: string; output_schema: unknown; model_config: Record<string, unknown> };
@@ -67,6 +68,23 @@ function flattenSections(parts: Array<{ chunk: ChunkRow; value: ReturnType<typeo
     }
   }
   return sections;
+}
+
+async function synthesizeOverview(analysisId: string, title: string, sections: SummarySection[]) {
+  const fallback = fallbackOverview(sections, title);
+  if ((process.env.LLM_PROVIDER ?? "mock").toLowerCase() !== "gemini" || sections.length < 2) return fallback;
+  const prompt = `Tài liệu: ${title}\nCác mục và tóm tắt ngắn (trích từ kết quả đã kiểm tra):\n${summaryContext(sections)}\n\nViết overview ngắn bằng tiếng Việt: lead 2–3 câu tối đa 450 ký tự; 3–7 highlights có tiêu đề cụ thể và giải thích tối đa 200 ký tự mỗi ý. Tổng hợp đúng nguồn, không thêm số liệu hoặc khẳng định không có trong danh sách. Không chép nối mọi mục thành một đoạn dài. Trả JSON {lead,highlights:[{title,detail}]}.`;
+  try {
+    const response = await generateLlm({
+      purpose: "overview_generation", system: "Bạn biên tập bản tóm tắt điều hành của tài liệu học tập. Tôn trọng tên mục, thứ tự và chứng cứ nguồn; viết ngắn, có tiêu đề, dễ quét mắt.", prompt, timeoutMs: 35_000,
+      schema: { type: "object", required: ["lead", "highlights"], properties: { lead: { type: "string" }, highlights: { type: "array", items: { type: "object", required: ["title", "detail"], properties: { title: { type: "string" }, detail: { type: "string" } } } } } },
+    });
+    await saveExchange({ analysisId, purpose: "overview_generation", attempt: 1, requestPayload: { prompt }, result: response });
+    return validatedOverview(response.value) ?? fallback;
+  } catch (error) {
+    await saveExchange({ analysisId, purpose: "overview_generation", attempt: 1, requestPayload: { prompt }, error });
+    return fallback;
+  }
 }
 
 async function resolveITSpecialization(analysis: Record<string, unknown>, sourceText: string) {
@@ -203,10 +221,13 @@ export async function runAnalysis(identity: RequestIdentity, analysisId: string)
         throw error;
       }
     }
+    const sections = flattenSections(completed);
+    const overview = await synthesizeOverview(analysisId, String(claimed.title || "Tài liệu"), sections);
     const resultJson = {
       title: claimed.title,
-      summary: completed.map(item => item.value.summary).filter(Boolean).join(" "),
-      sections: flattenSections(completed),
+      summary: overview.lead,
+      overview,
+      sections,
       metadata: {
         topicId: itContext.topicId,
         topicName: itContext.topicName,

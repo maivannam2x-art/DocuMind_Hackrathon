@@ -1,7 +1,7 @@
 import { getAdminDb } from "@/lib/db";
 import { ApiError } from "@/lib/http";
 
-export type LlmPurpose = "section_generation" | "quiz_generation" | "chat" | "repair" | "topic_detection" | "document_ocr";
+export type LlmPurpose = "section_generation" | "quiz_generation" | "chat" | "repair" | "topic_detection" | "document_ocr" | "overview_generation";
 export type LlmRequest = {
   purpose: LlmPurpose;
   system: string;

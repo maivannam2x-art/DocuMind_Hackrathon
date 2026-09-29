@@ -4,7 +4,8 @@ import { ChangeEvent, FormEvent, ReactNode, useCallback, useEffect, useMemo, use
 import type { User } from "@supabase/supabase-js";
 import { ResultBlockView } from "@/components/result-block";
 import { AuthDialog } from "@/components/auth-dialog";
-import { blockToPlainText, type ResultBlock } from "@/lib/result-content";
+import type { ResultBlock } from "@/lib/result-content";
+import { fallbackOverview, validatedOverview, type Overview } from "@/lib/overview";
 import { getSupabaseAccessToken, getSupabaseBrowserClient, hasSupabaseBrowserConfig } from "@/lib/supabase-browser";
 
 type Topic = { id: string; code: string; name: string; specializations: Array<{ id: string; name: string; parent_id: string | null; description?: string }> };
@@ -16,7 +17,7 @@ type Analysis = { id: string; title: string; status: string; user_id?: string | 
 type HistoryRow = Pick<Analysis, "id" | "title" | "status" | "quiz_enabled" | "created_at" | "updated_at" | "completed_at" | "error_code">;
 type Block = ResultBlock;
 type Section = { title: string; summary?: string; blocks: Block[] };
-type ResultJson = { title?: string; summary?: string; conclusion?: string; sections: Section[]; metadata?: Record<string, unknown> };
+type ResultJson = { title?: string; summary?: string; conclusion?: string; overview?: Overview; sections: Section[]; metadata?: Record<string, unknown> };
 type ChatMessage = { id?: string; role: "user" | "assistant"; content: string; citations?: string[] };
 type QuizQuestion = { id: string; prompt: string; options: string[]; difficulty?: string; question_type?: string };
 type QuizFeedback = { questionId: string; correct: boolean; answer: unknown; explanation: string | null };
@@ -30,6 +31,11 @@ function OutlineTree({ items, depth = 0 }: { items: OutlineItem[]; depth?: numbe
       <summary><span className="outline-number">{String(index + 1).padStart(2, "0")}</span><span className="outline-label"><strong>{item.title}</strong><small>{item.children?.length ? `${item.children.length} mục con · ` : ""}{typeof item.end === "number" && typeof item.start === "number" ? `${(item.end - item.start).toLocaleString("vi-VN")} ký tự` : "Nội dung tài liệu"}</small></span><span className="outline-chevron" aria-hidden="true">⌄</span></summary>
       <div className="outline-body">{item.preview && <p>{item.preview}</p>}{Boolean(item.children?.length) && depth < 6 && <OutlineTree items={item.children} depth={depth + 1} />}</div>
     </details>)}</div>;
+}
+
+function DetailSection({ section, index, analysisId, resultId }: { section: Section; index: number; analysisId?: string; resultId?: string }) {
+  const [opened, setOpened] = useState(false);
+  return <article className="panel detail-section"><div className="detail-title"><span>{String(index + 1).padStart(2, "0")}</span><div><h2>{section.title}</h2>{section.summary && <p>{section.summary}</p>}</div></div><button type="button" className="button button-secondary section-toggle" onClick={() => setOpened(value => !value)} aria-expanded={opened}>{opened ? "Thu gọn nội dung" : `Xem nội dung · ${section.blocks.length} khối`}</button>{opened && section.blocks.map((block, blockIndex) => <ResultBlockView block={block} analysisId={analysisId} resultId={resultId} key={`${block.type}-${blockIndex}`} />)}</article>;
 }
 const GUEST_ANALYSIS_STORAGE_KEY = "documind:guest-analysis-ids";
 const guestAnalysisIds = new Set<string>();
@@ -104,6 +110,9 @@ export default function Home() {
   const [result, setResult] = useState<ResultJson | null>(null);
   const [resultId, setResultId] = useState<string | null>(null);
   const [activeResultTab, setActiveResultTab] = useState("overview");
+  const [summaryVisible, setSummaryVisible] = useState(20);
+  const [detailVisible, setDetailVisible] = useState(8);
+  const [conclusionVisible, setConclusionVisible] = useState(20);
   const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]);
   const [quizLoadError, setQuizLoadError] = useState("");
   const [chatLoadError, setChatLoadError] = useState("");
@@ -124,8 +133,12 @@ export default function Home() {
   const selectedTopic = useMemo(() => topics.find(topic => topic.code === "IT"), [topics]);
   const selectedSpecialization = useMemo(() => selectedTopic?.specializations.find(item => item.id === specializationId), [selectedTopic, specializationId]);
   const allOutline = useMemo(() => report?.inputs.flatMap(input => input.structure) ?? outline, [report, outline]);
-  const resultSummary = useMemo(() => result?.summary?.trim() || result?.sections.map(section => section.summary?.trim()).filter(Boolean).join("\n\n") || "Tóm tắt đang được tạo từ các phần nội dung bên dưới.", [result]);
-  const resultConclusion = useMemo(() => result?.conclusion?.trim() || result?.summary?.trim() || result?.sections.map(section => section.summary?.trim()).filter(Boolean).at(-1) || "Kết luận chưa được tách riêng trong dữ liệu phân tích. Hãy xem lại các phần tổng hợp ở trên.", [result]);
+  const resultOverview = useMemo(() => result ? validatedOverview(result.overview) ?? fallbackOverview(result.sections, result.title || analysis?.title || "Tài liệu") : null, [result, analysis?.title]);
+  const resultSummary = useMemo(() => {
+    const stored = result?.summary?.trim() ?? "";
+    return stored.length >= 30 && stored.length <= 480 ? stored : resultOverview?.lead ?? "Tóm tắt đang được tạo từ nội dung bên dưới.";
+  }, [result, resultOverview]);
+  const resultConclusion = useMemo(() => (result?.conclusion?.trim() || resultSummary).slice(0, 900), [result, resultSummary]);
 
   useEffect(() => {
     api<{ data: Topic[] }>("/api/topics").then(response => setTopics(response.data ?? [])).catch(() => undefined);
@@ -187,6 +200,7 @@ export default function Home() {
     setAnalysis(current);
     setResultId(resultResponse.result.id);
     setResult(resultResponse.result.result_json);
+    setSummaryVisible(20); setDetailVisible(8); setConclusionVisible(20);
     setScreen("result");
     setActiveResultTab("overview");
     const [quizResult, chatResult] = await Promise.allSettled([
@@ -449,16 +463,19 @@ export default function Home() {
           setLoadingLabel("Đang chuẩn bị ảnh sơ đồ cho báo cáo...");
           const { default: mermaid } = await import("mermaid");
           mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "neutral" });
-          for (const [index, source] of diagrams.entries()) {
+          let sourceOnly = Math.max(0, diagrams.length - 24);
+          for (const [index, source] of diagrams.slice(0, 24).entries()) {
             try {
+              if (source.length > 10000 || !(await mermaid.parse(source, { suppressErrors: true }))) { sourceOnly++; continue; }
               const { svg } = await mermaid.render(`export-diagram-${Date.now()}-${index}`, source);
               await api(`/api/analyses/${analysisId}/assets`, {
                 method: "POST", body: JSON.stringify({ resultId, assetType: "mermaid", source, svg, title: "Sơ đồ báo cáo" }),
               });
             } catch {
-              throw new Error("Không dựng hoặc lưu được sơ đồ cho báo cáo. Hãy kiểm tra mã Mermaid trong phần Chi tiết rồi thử lại.");
+              sourceOnly++;
             }
           }
+          if (sourceOnly) setToast(`${sourceOnly} sơ đồ chưa tạo được ảnh; báo cáo vẫn giữ mã và nội dung gốc của chúng.`);
         }
       }
       setLoadingLabel("Đang tạo tệp báo cáo...");
@@ -596,15 +613,15 @@ export default function Home() {
               <div className="result-meta-line"><span className="status-pill status-ok">✓ Hoàn thành</span><span>{analysis?.title || result.title || "Tài liệu"}</span><span className="meta-dot">·</span><span>{(report?.totalWords ?? 0).toLocaleString("vi-VN")} từ</span><span className="meta-dot">·</span><span>{(result.sections ?? []).length} mục</span></div>
               {activeResultTab === "overview" && <>
                 <div className="metric-grid"><div className="metric-card"><span className="metric-icon violet">✦</span><small>PHẦN PHÂN TÍCH</small><strong>{result.sections?.length ?? 0}</strong><span>mục nội dung</span></div><div className="metric-card"><span className="metric-icon blue">▤</span><small>ĐỘ DÀI TÀI LIỆU</small><strong>{(report?.totalWords ?? 0).toLocaleString("vi-VN")}</strong><span>từ được xử lý</span></div><div className="metric-card"><span className="metric-icon green">✓</span><small>TRẠNG THÁI</small><strong className="metric-word">Hoàn thành</strong><span>{formatDate(analysis?.completed_at)}</span></div></div>
-                <article className="panel key-takeaways"><div className="result-section-head"><div><div className="panel-kicker">ĐIỀU BẠN CẦN BIẾT</div><h2>Tóm tắt tài liệu</h2></div><button className="text-button" onClick={() => setActiveResultTab("summary")}>Đọc đầy đủ →</button></div><p className="summary-copy">{resultSummary}</p><div className="takeaway-list">{result.sections.slice(0, 3).map((section, index) => <div key={`${section.title}-${index}`}><span>{String(index + 1).padStart(2, "0")}</span><div><strong>{section.title}</strong><p>{section.summary || (section.blocks?.[0] ? blockToPlainText(section.blocks[0]).slice(0, 180) : "")}</p></div></div>)}</div></article>
+                <article className="panel key-takeaways"><div className="result-section-head"><div><div className="panel-kicker">ĐIỀU BẠN CẦN BIẾT</div><h2>Tổng quan ngắn</h2></div><button className="text-button" onClick={() => setActiveResultTab("summary")}>Xem theo từng mục →</button></div><p className="summary-copy overview-lead">{resultSummary}</p><div className="takeaway-list">{resultOverview?.highlights.map((point, index) => <div key={`${point.title}-${index}`}><span>{String(index + 1).padStart(2, "0")}</span><div><strong>{point.title}</strong><p>{point.detail}</p></div></div>)}</div></article>
                 <div className="result-shortcuts"><button onClick={() => setActiveResultTab("detail")}><span>☷</span><strong>Đọc phân tích chi tiết</strong><i>→</i></button><button onClick={() => setActiveResultTab("conclusion")}><span>✓</span><strong>Xem kết luận</strong><i>→</i></button>{analysis?.quiz_enabled && <button onClick={() => setActiveResultTab("quiz")}><span>✧</span><strong>{quizQuestions.length ? `Làm quiz (${quizQuestions.length} câu)` : "Mở quiz ôn tập"}</strong><i>→</i></button>}<button onClick={() => setActiveResultTab("chat")}><span>✦</span><strong>Hỏi tiếp về tài liệu</strong><i>→</i></button><button onClick={() => setActiveResultTab("report")}><span>↓</span><strong>Tải báo cáo</strong><i>→</i></button></div>
               </>}
 
-              {activeResultTab === "summary" && <article className="panel result-article"><div className="panel-kicker">TÓM TẮT TÀI LIỆU</div><h2>{result.title || analysis?.title || "Tóm tắt"}</h2><p className="summary-copy">{resultSummary}</p>{result.sections.map((section, index) => <section className="article-section" key={`${section.title}-${index}`}><h3>{section.title}</h3>{section.summary && <p>{section.summary}</p>}{section.blocks.slice(0, 2).map((block, bi) => <ResultBlockView block={block} analysisId={analysisId ?? undefined} resultId={resultId ?? undefined} key={`${block.type}-${bi}`} />)}</section>)}</article>}
+              {activeResultTab === "summary" && <article className="panel result-article"><div className="panel-kicker">TÓM TẮT TÀI LIỆU</div><h2>{result.title || analysis?.title || "Tóm tắt"}</h2><p className="summary-copy overview-lead">{resultSummary}</p><h3 className="summary-subheading">Các ý quan trọng</h3><div className="summary-highlights">{resultOverview?.highlights.map((point, index) => <div key={`${point.title}-${index}`}><span>{String(index + 1).padStart(2, "0")}</span><div><strong>{point.title}</strong><p>{point.detail}</p></div></div>)}</div><h3 className="summary-subheading">Tóm tắt theo đề mục</h3><p className="summary-count">Hiển thị {Math.min(summaryVisible, result.sections.length)} / {result.sections.length} mục. Mở Chi tiết để xem đầy đủ bảng, sơ đồ, công thức và nội dung nguồn.</p>{result.sections.slice(0, summaryVisible).map((section, index) => <section className="article-section summary-section" key={`${section.title}-${index}`}><span>{String(index + 1).padStart(2, "0")}</span><div><h3>{section.title}</h3><p>{section.summary?.trim() || "Mục này có nội dung phân tích chi tiết; xem nguồn ở tab Chi tiết."}</p></div></section>)}{summaryVisible < result.sections.length && <button className="button button-secondary load-more" onClick={() => setSummaryVisible(count => count + 20)}>Xem thêm 20 mục →</button>}</article>}
 
-              {activeResultTab === "detail" && <div className="detail-sections">{result.sections.map((section, index) => <article className="panel detail-section" key={`${section.title}-${index}`}><div className="detail-title"><span>{String(index + 1).padStart(2, "0")}</span><div><h2>{section.title}</h2>{section.summary && <p>{section.summary}</p>}</div></div>{section.blocks.map((block, blockIndex) => <ResultBlockView block={block} analysisId={analysisId ?? undefined} resultId={resultId ?? undefined} key={`${block.type}-${blockIndex}`} />)}</article>)}</div>}
+              {activeResultTab === "detail" && <div className="detail-sections">{result.sections.slice(0, detailVisible).map((section, index) => <DetailSection section={section} index={index} analysisId={analysisId ?? undefined} resultId={resultId ?? undefined} key={`${section.title}-${index}`} />)}{detailVisible < result.sections.length && <button className="button button-secondary load-more" onClick={() => setDetailVisible(count => count + 8)}>Xem thêm 8 mục · {result.sections.length - detailVisible} mục còn lại →</button>}</div>}
 
-              {activeResultTab === "conclusion" && <article className="panel conclusion-panel"><div className="conclusion-heading"><span className="conclusion-mark">✓</span><div><div className="panel-kicker">KẾT LUẬN TỔNG HỢP</div><h2>{result.title || analysis?.title || "Điều rút ra từ tài liệu"}</h2></div></div><p className="conclusion-copy">{resultConclusion}</p><div className="conclusion-highlights"><h3>Các điểm đã được phân tích</h3>{result.sections.map((section, index) => <div className="conclusion-highlight" key={`${section.title}-${index}`}><span>{String(index + 1).padStart(2, "0")}</span><div><strong>{section.title}</strong><p>{section.summary || (section.blocks[0] ? blockToPlainText(section.blocks[0]).slice(0, 220) : "")}</p></div></div>)}</div><div className="conclusion-actions"><button className="button button-secondary" onClick={() => setActiveResultTab("detail")}>Quay lại phân tích chi tiết</button>{analysis?.quiz_enabled && <button className="button button-primary" onClick={() => setActiveResultTab("quiz")}>Ôn tập với quiz →</button>}</div></article>}
+              {activeResultTab === "conclusion" && <article className="panel conclusion-panel"><div className="conclusion-heading"><span className="conclusion-mark">✓</span><div><div className="panel-kicker">KẾT LUẬN TỔNG HỢP</div><h2>{result.title || analysis?.title || "Điều rút ra từ tài liệu"}</h2></div></div><p className="conclusion-copy">{resultConclusion}</p><div className="conclusion-highlights"><h3>Các điểm đã được phân tích</h3>{result.sections.slice(0, conclusionVisible).map((section, index) => <div className="conclusion-highlight" key={`${section.title}-${index}`}><span>{String(index + 1).padStart(2, "0")}</span><div><strong>{section.title}</strong><p>{section.summary || "Xem nội dung nguồn trong phần Chi tiết."}</p></div></div>)}{conclusionVisible < result.sections.length && <button className="button button-secondary load-more" onClick={() => setConclusionVisible(count => count + 20)}>Xem thêm kết luận →</button>}</div><div className="conclusion-actions"><button className="button button-secondary" onClick={() => setActiveResultTab("detail")}>Quay lại phân tích chi tiết</button>{analysis?.quiz_enabled && <button className="button button-primary" onClick={() => setActiveResultTab("quiz")}>Ôn tập với quiz →</button>}</div></article>}
 
               {activeResultTab === "quiz" && <article className="panel quiz-panel"><div className="panel-kicker">ÔN TẬP TƯƠNG TÁC</div><h2>Kiểm tra kiến thức</h2><p>Chọn một đáp án cho mỗi câu hỏi. Đáp án sẽ được kiểm tra dựa trên tài liệu.</p>{quizLoadError && <div className="inline-error" role="alert">{quizLoadError}<button onClick={() => void reloadQuiz()}>Tạo hoặc tải lại quiz</button></div>}{quizQuestions.length === 0 ? (analysis?.quiz_enabled ? <div className="empty-state compact-empty"><h3>Quiz chưa sẵn sàng</h3><p>Hệ thống sẽ tạo quiz từ những phần tài liệu đã lưu.</p><button className="button button-secondary" disabled={busy} onClick={() => void reloadQuiz()}>Tạo lại quiz</button></div> : <div className="empty-inline">Phiên này không yêu cầu tạo quiz.</div>) : <>{quizQuestions.map((question, index) => { const feedback = quizFeedback?.find(item => item.questionId === question.id); return <div className="quiz-question" key={question.id}><div className="quiz-q-meta"><span>CÂU {String(index + 1).padStart(2, "0")}</span><small>{question.difficulty === "easy" ? "Cơ bản" : question.difficulty === "hard" ? "Nâng cao" : "Trung bình"}</small></div><h3>{question.prompt}</h3><div className="quiz-options">{question.options.map((option, optionIndex) => <label key={optionIndex} className={`${quizAnswers[question.id] === optionIndex ? "selected" : ""} ${feedback && Number(feedback.answer) === optionIndex ? "right-answer" : ""} ${feedback && quizAnswers[question.id] === optionIndex && !feedback.correct ? "wrong-answer" : ""}`}><input type="radio" name={question.id} checked={quizAnswers[question.id] === optionIndex} disabled={Boolean(quizFeedback)} onChange={() => setQuizAnswers(current => ({ ...current, [question.id]: optionIndex }))} /><span className="option-letter">{String.fromCharCode(65 + optionIndex)}</span><span>{option}</span>{feedback && Number(feedback.answer) === optionIndex && <b>✓</b>}</label>)}</div>{feedback?.explanation && <p className={`quiz-explanation ${feedback.correct ? "" : "incorrect"}`}>{feedback.correct ? "Chính xác." : "Chưa chính xác."} {feedback.explanation}</p>}</div>; })}{quizScore && <div className="score-banner"><strong>{quizScore.correctAnswers}/{quizScore.attempt.total_questions} câu đúng</strong><span>Điểm {quizScore.attempt.score}%</span></div>}<div className="quiz-submit-row">{quizFeedback && <button className="button button-secondary" onClick={() => { setQuizFeedback(null); setQuizScore(null); setQuizAnswers({}); }}>Làm lại quiz</button>}<button className="button button-primary" disabled={busy || Boolean(quizFeedback) || Object.keys(quizAnswers).length !== quizQuestions.length} onClick={() => void submitQuiz()}>{busy ? "Đang kiểm tra..." : "Nộp bài quiz →"}</button></div></>}</article>}
 
@@ -615,7 +632,7 @@ export default function Home() {
                 <div className="report-format-grid">
                   {[{ id: "pdf", name: "PDF", detail: "Bản trình bày để đọc và chia sẻ" }, { id: "docx", name: "Word (.docx)", detail: "Có thể chỉnh sửa trong Microsoft Word" }, { id: "markdown", name: "Markdown (.md)", detail: "Tài liệu văn bản cho ghi chú và kỹ thuật" }, { id: "html", name: "HTML", detail: "Trang báo cáo có định dạng" }, { id: "json", name: "JSON", detail: "Dữ liệu có cấu trúc cho tích hợp kỹ thuật" }].map(format => <article className="report-format-card" key={format.id}><span className="report-format-icon">{format.id === "pdf" ? "PDF" : format.id === "docx" ? "W" : format.id === "json" ? "{}" : format.id.toUpperCase()}</span><div><strong>{format.name}</strong><p>{format.detail}</p></div><button className="button button-secondary" disabled={busy} onClick={() => void exportResult(format.id as "pdf" | "docx" | "markdown" | "html" | "json")}>{busy ? "Đang tạo..." : "Tải xuống"}</button></article>)}
                 </div>
-                <div className="report-preview"><div className="report-preview-head"><span className="panel-kicker">XEM TRƯỚC</span><span>{result.sections.length} mục · Tiếng Việt</span></div><h1>{result.title || analysis?.title || "Báo cáo học tập"}</h1><p>{resultSummary}</p>{result.sections.map((section, index) => <section key={`${section.title}-${index}`}><h3>{index + 1}. {section.title}</h3>{section.summary && <p>{section.summary}</p>}{section.blocks.map((block, blockIndex) => <ResultBlockView block={block} analysisId={analysisId ?? undefined} resultId={resultId ?? undefined} key={`${block.type}-${blockIndex}`} />)}</section>)}</div>
+                <div className="report-preview"><div className="report-preview-head"><span className="panel-kicker">XEM TRƯỚC · 8 MỤC ĐẦU</span><span>{result.sections.length} mục · Tiếng Việt</span></div><h1>{result.title || analysis?.title || "Báo cáo học tập"}</h1><p>{resultSummary}</p>{result.sections.slice(0, 8).map((section, index) => <section key={`${section.title}-${index}`}><h3>{index + 1}. {section.title}</h3>{section.summary && <p>{section.summary}</p>}{section.blocks.slice(0, 3).map((block, blockIndex) => <ResultBlockView block={block} analysisId={analysisId ?? undefined} resultId={resultId ?? undefined} key={`${block.type}-${blockIndex}`} />)}</section>)}{result.sections.length > 8 && <p>Đây là bản xem trước; tệp xuất chứa đầy đủ {result.sections.length} mục.</p>}</div>
               </section>}
 
             </div>

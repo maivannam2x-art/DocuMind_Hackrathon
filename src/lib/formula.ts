@@ -8,10 +8,21 @@ import { RegisterHTMLHandler } from "mathjax-full/js/handlers/html.js";
 const adaptor = liteAdaptor();
 RegisterHTMLHandler(adaptor);
 const mathDocument = mathjax.document("", { InputJax: new TeX({ packages: ["base", "ams"] }), OutputJax: new SVG({ fontCache: "none" }) });
+const formulaCache = new Map<string, Promise<{ bytes: Buffer; width: number; height: number }>>();
 
 export async function renderFormulaPng(latex: string) {
   const source = latex.trim().replace(/^\$\$?|\$\$?$/g, "");
   if (!source || source.length > 2000 || /[\u0000-\u001f]/.test(source)) throw new Error("Công thức LaTeX không hợp lệ để xuất ảnh.");
+  const cached = formulaCache.get(source);
+  if (cached) return cached;
+  const pending = render(source);
+  if (formulaCache.size >= 128) formulaCache.clear();
+  formulaCache.set(source, pending);
+  try { return await pending; }
+  catch (error) { formulaCache.delete(source); throw error; }
+}
+
+async function render(source: string) {
   const rendered = adaptor.outerHTML(mathDocument.convert(source, { display: true }));
   const svgMatch = rendered.match(/<svg\b[\s\S]*?<\/svg>/);
   const boxMatch = svgMatch?.[0].match(/viewBox="[\d.-]+\s+[\d.-]+\s+([\d.]+)\s+([\d.]+)"/);

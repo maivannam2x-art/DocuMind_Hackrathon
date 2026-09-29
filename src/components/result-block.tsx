@@ -7,13 +7,17 @@ import { scalarText, type ResultBlock } from "@/lib/result-content";
 
 function MermaidDiagram({ source, analysisId, resultId }: { source: string; analysisId?: string; resultId?: string }) {
   const id = `mermaid-${useId().replaceAll(":", "")}`;
+  const [opened, setOpened] = useState(false);
   const [svg, setSvg] = useState("");
   const [error, setError] = useState("");
   const persistedKey = useRef("");
   useEffect(() => {
+    if (!opened || !source.trim() || source.length > 10000) return;
     let current = true;
     import("mermaid").then(async ({ default: mermaid }) => {
       mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "neutral" });
+      const parsed = await mermaid.parse(source, { suppressErrors: true });
+      if (!parsed) throw new Error("Invalid Mermaid source");
       return mermaid.render(id, source);
     }).then(({ svg: rendered }) => {
       if (current) setSvg(rendered);
@@ -21,7 +25,7 @@ function MermaidDiagram({ source, analysisId, resultId }: { source: string; anal
       if (current) setError("Không thể dựng sơ đồ tự động. Mã nguồn sơ đồ vẫn được giữ bên dưới.");
     });
     return () => { current = false; };
-  }, [id, source]);
+  }, [id, source, opened]);
   useEffect(() => {
     if (!svg || !analysisId || !resultId) return;
     const key = `${analysisId}:${resultId}:${source}`;
@@ -42,11 +46,13 @@ function MermaidDiagram({ source, analysisId, resultId }: { source: string; anal
     }).catch(() => undefined);
     return () => { current = false; };
   }, [analysisId, resultId, source, svg]);
-  return <div className="diagram-view">
-    {svg && <div className="diagram-render" role="img" aria-label="Sơ đồ từ tài liệu" dangerouslySetInnerHTML={{ __html: svg }} />}
-    {error && <p className="diagram-error">{error}</p>}
-    <details><summary>{svg ? "Xem mã sơ đồ" : "Mã sơ đồ"}</summary><pre>{source}</pre></details>
-  </div>;
+  return <details className="diagram-view" onToggle={event => setOpened(event.currentTarget.open)}>
+    <summary>{svg ? "Sơ đồ · mở để xem ảnh" : "Sơ đồ · mở để kiểm tra và dựng ảnh"}</summary>
+    {opened && <>{svg && <div className="diagram-render" role="img" aria-label="Sơ đồ từ tài liệu" dangerouslySetInnerHTML={{ __html: svg }} />}
+      {(error || source.length > 10000) && <p className="diagram-error">Mã sơ đồ không hợp lệ hoặc quá dài để dựng ảnh. Nội dung nguồn vẫn được giữ bên dưới.</p>}
+      {!svg && !error && source.length <= 10000 && <p className="diagram-error">Đang kiểm tra cú pháp sơ đồ...</p>}
+      <details><summary>Xem mã Mermaid</summary><pre>{source}</pre></details></>}
+  </details>;
 }
 
 function StructuredData({ value }: { value: Record<string, unknown> }) {
