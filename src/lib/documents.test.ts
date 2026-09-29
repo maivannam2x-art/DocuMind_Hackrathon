@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { chunkText, extractFile, mimeTypeForFilename, normalizeText } from "@/lib/documents";
+import { chunkText, extractFile, mimeTypeForFilename, normalizeText, outlineText } from "@/lib/documents";
 import { Document, Packer, Paragraph } from "docx";
 import { reportToPdf } from "@/lib/report";
 import sharp from "sharp";
@@ -75,8 +75,39 @@ describe("document preparation", () => {
 
   it("keeps headings as chunk titles and covers all content", () => {
     const chunks = chunkText("# Part one\nA useful paragraph.\n\n## Part two\nAnother useful paragraph.");
-    expect(chunks.map(chunk => chunk.title)).toEqual(["Part one", "Part two"]);
+    expect(outlineText("# Part one\nA useful paragraph.\n\n## Part two\nAnother useful paragraph.")[0].children[0].title).toBe("Part two");
+    expect(chunks).toHaveLength(1); // Short headings do not spend a model call each.
     expect(chunks.map(chunk => chunk.content).join("\n")).toContain("Another useful paragraph.");
+  });
+
+  it("recognizes Roman parents and alphabetic children while ignoring numbered prose", () => {
+    const source = `Giới thiệu về mạng máy tính.\nI. Giao thức mạng\nA. TCP handshake\nSYN, SYN-ACK và ACK.\nB. Kiểm soát lỗi\nGói tin được kiểm tra.\n1.5 milliseconds is the RTT measurement.\nII. Cơ sở dữ liệu\nA. MVCC\nDữ liệu đồng thời.\nB. Index\nB-tree index tìm kiếm nhanh.`;
+    const nodes = outlineText(source);
+    expect(nodes.map(node => node.title)).toEqual(["Mở đầu", "I. Giao thức mạng", "II. Cơ sở dữ liệu"]);
+    expect(nodes[1].children.map(node => node.title)).toEqual(["A. TCP handshake", "B. Kiểm soát lỗi"]);
+    expect(nodes[2].children.map(node => node.title)).toEqual(["A. MVCC", "B. Index"]);
+    expect(nodes[1].end).toBe(nodes[2].start);
+    expect(chunkText(source)).toHaveLength(1);
+    expect(chunkText(source)[0].content).toContain("1.5 milliseconds");
+  });
+
+  it("uses a sequential A/B/C or 1/2/3 outline, but does not treat isolated numeric lines as headings", () => {
+    const alphabetic = outlineText("A. Kiến trúc hệ thống\nAPI gateway.\nB. Dữ liệu\nPostgreSQL.\nC. Triển khai\nVercel.");
+    expect(alphabetic.map(node => node.title)).toEqual(["A. Kiến trúc hệ thống", "B. Dữ liệu", "C. Triển khai"]);
+    const numeric = outlineText("1. Giao thức TCP\nNội dung một.\n1.1. Handshake\nBa bước.\n2. Giao thức UDP\nNội dung hai.");
+    expect(numeric.map(node => node.title)).toEqual(["1. Giao thức TCP", "2. Giao thức UDP"]);
+    expect(numeric[0].children[0].title).toBe("1.1. Handshake");
+    expect(outlineText("1.5 milliseconds is the RTT.\nMột câu khác mô tả thời gian.")).toHaveLength(1);
+    const firstAlphabetic = outlineText("A. Thiết kế\nMô tả.\nB. Triển khai\nI. Ví dụ trích dẫn\nII. Ví dụ tiếp theo\nNội dung.");
+    expect(firstAlphabetic.map(node => node.title)).toEqual(["A. Thiết kế", "B. Triển khai"]);
+  });
+
+  it("keeps small headings and typed visual source together for one AI request", () => {
+    const source = "I. Thuật toán\nA. Công thức\n$$T(n)=n\\log n$$\nB. Sơ đồ\n```mermaid\nflowchart TD\n A-->B\n```\nII. Kết quả\nA. Giải thích\nThời gian chạy tuyến tính.";
+    const chunks = chunkText(source);
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].content).toContain("$$T(n)=n\\log n$$");
+    expect(chunks[0].content).toContain("```mermaid");
   });
 
   it("splits long text into bounded overlapping chunks", () => {
@@ -107,7 +138,7 @@ describe("document preparation", () => {
     const content = Array.from({ length: 180 }, (_, i) => `## Phần ${i + 1}: PostgreSQL index\nB-tree giúp truy vấn WHERE nhanh hơn trong ví dụ ${i + 1}. ${"EXPLAIN ANALYZE cho biết query plan và chi phí thực thi. ".repeat(40)}`).join("\n\n");
     const chunks = chunkText(content);
     expect(content.length).toBeGreaterThan(400_000);
-    expect(chunks.length).toBeGreaterThan(40);
+    expect(chunks.length).toBeGreaterThan(33); // 400k+ characters still require bounded requests.
     expect(chunks.every(chunk => chunk.content.length <= 12_000)).toBe(true);
     expect(chunks.at(-1)?.content).toContain("ví dụ 180");
     expect(chunks.every((chunk, index) => index === 0 || chunk.charStart >= chunks[index - 1].charStart)).toBe(true);

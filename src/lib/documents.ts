@@ -167,6 +167,89 @@ export function normalizeText(value: string) {
 }
 
 export type TextChunk = { chunkIndex: number; title: string; content: string; charStart: number; charEnd: number };
+export type OutlineNode = { title: string; preview: string; start: number; end: number; children: OutlineNode[] };
+
+type Heading = { title: string; start: number; kind: "markdown" | "roman" | "alpha" | "number"; depth: number; ordinal: number };
+
+function romanValue(value: string) {
+  const values: Record<string, number> = { I: 1, V: 5, X: 10, L: 50, C: 100, D: 500, M: 1000 };
+  let total = 0;
+  for (let i = 0; i < value.length; i++) total += values[value[i]] * (values[value[i]] < (values[value[i + 1]] ?? 0) ? -1 : 1);
+  let check = total;
+  const canonical = [1000,900,500,400,100,90,50,40,10,9,5,4,1].map((n,i) => {
+    const marks = ["M","CM","D","CD","C","XC","L","XL","X","IX","V","IV","I"];
+    const count = Math.floor(check / n); check %= n; return marks[i].repeat(count);
+  }).join("");
+  return total > 0 && total <= 3999 && canonical === value ? total : 0;
+}
+
+function detectHeadings(text: string): Heading[] {
+  const candidates: Heading[] = [];
+  let inFence = false;
+  let offset = 0;
+  for (const line of text.split("\n")) {
+    const trimmed = line.trim();
+    if (/^(```|~~~)/.test(trimmed)) inFence = !inFence;
+    if (!inFence && trimmed.length <= 125) {
+      const md = /^(#{1,6})\s+(.{3,110})$/.exec(trimmed);
+      const marked = /^([A-Z]|[IVXLCDM]{2,8}|\d{1,3}(?:\.\d{1,3}){0,3})[.)]\s+(.{3,110})$/.exec(trimmed);
+      if (md) candidates.push({ title: md[2], start: offset, kind: "markdown", depth: md[1].length, ordinal: 0 });
+      else if (marked && /[\p{L}]/u.test(marked[2]) && !/[.!?;:]$/.test(marked[2])) {
+        const marker = marked[1];
+        const roman = /^[IVXLCDM]+$/.test(marker) ? romanValue(marker) : 0;
+        const kind = /^\d/.test(marker) ? "number" : roman ? "roman" : "alpha";
+        candidates.push({ title: trimmed, start: offset, kind, depth: kind === "number" ? marker.split(".").length : 1, ordinal: kind === "number" ? Number(marker.split(".").at(-1)) : roman || marker.charCodeAt(0) - 64 });
+      }
+    }
+    offset += line.length + 1;
+  }
+  const firstPair = (kind: Heading["kind"]) => {
+    const items = candidates.filter(item => item.kind === kind && item.depth === 1);
+    const index = items.findIndex((item, i) => i > 0 && item.ordinal === items[i - 1].ordinal + 1);
+    return index > 0 ? items[index - 1].start : Number.POSITIVE_INFINITY;
+  };
+  const qualifies = (kind: Heading["kind"]) => Number.isFinite(firstPair(kind));
+  // An explicit Markdown document wins. Otherwise require a sequential pair;
+  // an isolated numbered sentence or measurement must never create a section.
+  const root = candidates.some(item => item.kind === "markdown") ? "markdown"
+    : ([...(["roman", "alpha", "number"] as const)]).sort((a, b) => firstPair(a) - firstPair(b)).find(qualifies);
+  if (!root) return [];
+  if (qualifies("alpha")) for (const item of candidates) {
+    const letter = /^([A-Z])[.)]/.exec(item.title)?.[1];
+    if (letter && letter !== "I" && item.kind === "roman" && !(root === "roman" && qualifies("roman") && item.ordinal < 10)) {
+      item.kind = "alpha"; item.ordinal = letter.charCodeAt(0) - 64;
+    }
+  }
+  const supported = new Set<Heading["kind"]>([root]);
+  if (root === "roman") { if (qualifies("alpha")) supported.add("alpha"); if (qualifies("number")) supported.add("number"); }
+  if (root === "alpha") { if (qualifies("roman")) supported.add("roman"); if (qualifies("number")) supported.add("number"); }
+  return candidates.filter(item => supported.has(item.kind) && (item.kind !== "number" || item.depth === 1 || root === "number"));
+}
+
+export function outlineText(text: string): OutlineNode[] {
+  const normalized = normalizeText(text);
+  if (!normalized) return [];
+  const headings = detectHeadings(normalized);
+  if (!headings.length) return [{ title: "Tài liệu", preview: normalized.slice(0, 180), start: 0, end: normalized.length, children: [] }];
+  const rootKind = headings[0].kind;
+  const rank = (item: Heading) => item.kind === "markdown" ? item.depth : item.kind === rootKind ? item.depth : item.kind === "alpha" ? 2 : 3;
+  const roots: OutlineNode[] = [];
+  const stack: Array<{ node: OutlineNode; level: number }> = [];
+  if (headings[0].start > 0) roots.push({ title: "Mở đầu", preview: normalized.slice(0, headings[0].start).trim().slice(0, 180), start: 0, end: headings[0].start, children: [] });
+  for (const heading of headings) {
+    const level = rank(heading);
+    while (stack.length && stack.at(-1)!.level >= level) stack.pop()!.node.end = heading.start;
+    const node: OutlineNode = { title: heading.title, preview: "", start: heading.start, end: normalized.length, children: [] };
+    if (stack.length) stack.at(-1)!.node.children.push(node); else roots.push(node);
+    stack.push({ node, level });
+  }
+  const setPreview = (nodes: OutlineNode[]) => nodes.forEach(node => {
+    node.preview = normalized.slice(node.start, node.children[0]?.start ?? node.end).replace(/^.*\n?/, "").trim().slice(0, 180);
+    setPreview(node.children);
+  });
+  setPreview(roots);
+  return roots;
+}
 
 function splitLongSection(text: string, title: string, baseOffset: number, limit: number, overlap: number): TextChunk[] {
   const chunks: TextChunk[] = [];
@@ -187,28 +270,27 @@ function splitLongSection(text: string, title: string, baseOffset: number, limit
 
 export function chunkText(text: string): TextChunk[] {
   const normalized = normalizeText(text);
+  if (!normalized) return [];
   const limit = envInt("MAX_CHUNK_CHARS", 12000);
   const overlap = Math.min(envInt("CHUNK_OVERLAP_CHARS", 500), Math.floor(limit / 4));
-  const headingPattern = /^(#{1,6}\s+.+|(?:\d+(?:\.\d+)*[.)]?\s+)[^\n]{2,100})$/gm;
-  const headings = Array.from(normalized.matchAll(headingPattern));
-  const sections: Array<{ title: string; content: string; start: number }> = [];
-  if (!headings.length) sections.push({ title: "Tài liệu", content: normalized, start: 0 });
-  else {
-    if (headings[0].index && headings[0].index > 0) sections.push({ title: "Mở đầu", content: normalized.slice(0, headings[0].index).trim(), start: 0 });
-    for (let i = 0; i < headings.length; i++) {
-      const current = headings[i];
-      const contentStart = current.index ?? 0;
-      const nextStart = headings[i + 1]?.index ?? normalized.length;
-      const title = current[0].replace(/^#{1,6}\s+/, "").trim();
-      const content = normalized.slice(contentStart, nextStart).trim();
-      sections.push({ title, content, start: contentStart });
-    }
-  }
+  const sections = outlineText(normalized);
   const result: TextChunk[] = [];
+  let pending: OutlineNode[] = [];
+  const flush = () => {
+    if (!pending.length) return;
+    const start = pending[0].start, end = pending.at(-1)!.end;
+    result.push({ chunkIndex: result.length, title: pending.length === 1 ? pending[0].title : `${pending[0].title} – ${pending.at(-1)!.title}`, content: normalized.slice(start, end).trim(), charStart: start, charEnd: end });
+    pending = [];
+  };
   for (const section of sections) {
-    for (const part of splitLongSection(section.content, section.title, section.start, limit, overlap)) {
-      result.push({ ...part, chunkIndex: result.length });
+    if (section.end - section.start > limit) {
+      flush();
+      for (const part of splitLongSection(normalized.slice(section.start, section.end), section.title, section.start, limit, overlap)) result.push({ ...part, chunkIndex: result.length });
+    } else {
+      if (pending.length && section.end - pending[0].start > limit) flush();
+      pending.push(section);
     }
   }
+  flush();
   return result;
 }

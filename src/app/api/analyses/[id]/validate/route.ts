@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { getAnalysis, getIdentity } from "@/lib/auth";
 import { getAdminDb, envInt } from "@/lib/db";
-import { chunkText, normalizeText } from "@/lib/documents";
+import { chunkText, normalizeText, outlineText } from "@/lib/documents";
 import { ApiError, errorResponse, ok } from "@/lib/http";
 
 type Context = { params: Promise<{ id: string }> };
@@ -33,7 +33,8 @@ export async function POST(request: NextRequest, context: Context) {
         rules.push({ code: "input_text_required", severity: "error", message: `Không trích xuất đủ văn bản từ ${input.original_name || "đầu vào"}.`, inputId: input.id });
       }
       const chunks = chunkText(text);
-      headingCount += chunks.filter(chunk => chunk.title !== "Tài liệu" && chunk.title !== "Mở đầu").length;
+      const structure = outlineText(text);
+      headingCount += structure.filter(item => item.title !== "Tài liệu" && item.title !== "Mở đầu").length;
       for (const chunk of chunks) chunkRows.push({
         analysis_id: id, input_id: input.id, chunk_index: chunk.chunkIndex, title: chunk.title,
         content: chunk.content, char_start: chunk.charStart, char_end: chunk.charEnd, status: "pending",
@@ -41,7 +42,7 @@ export async function POST(request: NextRequest, context: Context) {
       inputReports.push({
         id: input.id, name: input.original_name, characters: text.length,
         words: text ? text.split(/\s+/).length : 0, chunkCount: chunks.length,
-        structure: chunks.map(({ chunkIndex, title, content }) => ({ chunkIndex, title, preview: content.slice(0, 180) })),
+        structure, 
       });
     }
     if (headingCount === 0) rules.push({ code: "structure_no_heading", severity: "info", message: "Không phát hiện tiêu đề rõ ràng; tài liệu được chia theo độ dài." });
@@ -68,4 +69,3 @@ export async function POST(request: NextRequest, context: Context) {
     return ok({ analysisId: id, status: blocking ? "draft" : "needs_review", report });
   } catch (error) { return errorResponse(error); }
 }
-
