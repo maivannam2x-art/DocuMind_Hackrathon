@@ -43,6 +43,6 @@
 
 ## Kiểm thử và khoảng trống còn lại
 
-- Unit/integration: PDF/DOCX thực được trích xuất; PNG giả lập Gemini mang công thức/sơ đồ; mock long chunk, schema, JSON, quiz, PDF/DOCX/HTML/Markdown export có bài kiểm tra. TypeScript và ESLint không lỗi (còn 2 cảnh báo `<img>`). Số test cuối cùng được ghi ở bản commit/deploy.
+- Unit/integration: **32/32 test qua**; PDF/DOCX thực được trích xuất; PNG giả lập Gemini mang công thức/sơ đồ; mock long chunk, schema, JSON, quiz, PDF/DOCX/HTML/Markdown export có bài kiểm tra. TypeScript và ESLint không lỗi (còn 2 cảnh báo `<img>`); local `next build` qua. GitHub Vercel status của commit `2024de0c86fd8070d99cd53c90ea87b19676450e` là `success`, trang chính live mở được sau deploy.
 - Mẫu live đã xác nhận Input → Review → Gemini → Overview → Detail (SVG, KaTeX, JSON) → Quiz → Chat → Export preview. Chưa xác nhận file tải được, chưa upload ảnh/PDF/DOCX trên live, chưa đo tải 500.000 ký tự, chưa kiểm tra nhiều người dùng hay mobile visual.
 - Chưa đạt điều kiện gọi là **production hoàn thiện** cho mọi tài liệu: xử lý dài cần job bền vững, công thức PDF/Word phải tương ứng preview, và Figma Product(V2) cần truy cập trực tiếp để đối chiếu từng kích thước/interaction. Các mục này vẫn mở; không nên công bố rằng toàn bộ case đã qua.
