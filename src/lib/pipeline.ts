@@ -189,7 +189,7 @@ export async function runAnalysis(identity: RequestIdentity, analysisId: string)
         topic: itContext.specializationName,
         custom_prompt: claimed.custom_prompt ?? "",
         content: `Vị trí trong tài liệu: ${chunk.title}\n\n${chunk.content}`,
-      }) + "\n\nQUY TẮC CẤU TRÚC NGUỒN: Các đề mục I/II, A/B, 1/2 và mục con trong nội dung là thứ bậc tài liệu; giữ quan hệ cha/con khi giải thích, không coi mỗi dòng bắt đầu bằng số là tiêu đề. Các đề mục ngắn trong lô này thuộc cùng ngữ cảnh. Không bỏ qua hình/sơ đồ, mã Mermaid, công thức LaTeX hoặc bảng đã được trích xuất; trả block đúng contentType, không bịa hình ảnh hay công thức không có trong nguồn.";
+      }) + "\n\nQUY TẮC CẤU TRÚC NGUỒN: Các đề mục I/II, A/B, 1/2 và mục con trong nội dung là thứ bậc tài liệu; giữ tên chương và quan hệ cha/con khi giải thích. Với các mục A/B có phần thân đủ dài và nội dung khác nhau, tạo section riêng có tiêu đề gắn với chương cha; các mục rất ngắn có thể gộp trong cùng section. Không coi mỗi dòng bắt đầu bằng số là tiêu đề. Không gộp nội dung của hai chương lớn vào một section. Không bỏ qua hình/sơ đồ, mã Mermaid, công thức LaTeX hoặc bảng đã được trích xuất; trả block đúng contentType, không bịa hình ảnh hay công thức không có trong nguồn.";
       try {
         let llm = await invokeAndLog(analysisId, chunk.id, "section_generation", sectionPrompt, userPrompt, chunk.retry_count + 1);
         let value: ReturnType<typeof assertResult>;
