@@ -131,7 +131,11 @@ async function loadSectionPrompt(analysis: Record<string, unknown>, topicId: str
     const { data: selected } = await db.from("prompt_templates").select("*")
       .eq("id", analysis.prompt_template_id).eq("purpose", "section_generation")
       .eq("topic_id", topicId).eq("is_active", true).maybeSingle();
-    if (selected && (!selected.specialization_id || selected.specialization_id === specializationId)) return selected as PromptRow;
+    if (selected && selected.specialization_id === specializationId) return selected as PromptRow;
+    // Analyses created before topic detection often carry the generic IT template.
+    // Prefer the detected specialization once it is known, while preserving an
+    // explicitly selected specialization-specific template.
+    if (selected && !selected.specialization_id && !specializationId) return selected as PromptRow;
   }
   return loadPrompt("section_generation", topicId, specializationId) as Promise<PromptRow>;
 }
