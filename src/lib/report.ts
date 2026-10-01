@@ -24,8 +24,20 @@ function isFormula(block: ResultBlock) {
   return block.contentType === "latex" || ["formula", "math", "equation"].includes(block.type);
 }
 
-function embeddedDiagramPng(block: ResultBlock) {
-  if (!(block.contentType === "mermaid" || block.type === "mermaid" || block.type === "diagram")) return null;
+function blockLabel(block: ResultBlock) {
+  if (block.contentType === "json" || block.type === "json") return "JSON · dữ liệu có cấu trúc";
+  if (block.contentType === "image" || block.type === "image") return "Hình ảnh";
+  if (block.contentType === "mermaid" || block.type === "mermaid" || block.type === "diagram") return "Sơ đồ · mã nguồn";
+  if (isFormula(block)) return "Công thức · LaTeX";
+  return block.type.replaceAll("_", " ");
+}
+
+function isVisual(block: ResultBlock) {
+  return block.contentType === "mermaid" || block.type === "mermaid" || block.type === "diagram" || block.contentType === "image" || block.type === "image";
+}
+
+function embeddedVisualPng(block: ResultBlock) {
+  if (!isVisual(block)) return null;
   const encoded = typeof block.metadata?.inlinePngBase64 === "string" ? block.metadata.inlinePngBase64 : "";
   if (!encoded || encoded.length > 5_600_000 || !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) return null;
   const bytes = Buffer.from(encoded, "base64");
@@ -52,12 +64,12 @@ function markdownBlock(block: ResultBlock) {
 
 export function reportToMarkdown(report: ReportDocument) {
   const lines = [`# ${report.title || "Báo cáo học tập"}`, "", report.summary || "", ""];
-  if (report.conclusion) lines.push("## Kết luận", "", report.conclusion, "");
   for (const section of report.sections ?? []) {
     lines.push(`## ${section.title}`, "");
     if (section.summary) lines.push(section.summary, "");
     for (const block of section.blocks ?? []) lines.push(markdownBlock(block), "");
   }
+  if (report.conclusion) lines.push("## Kết luận", "", report.conclusion, "");
   return lines.join("\n").trim() + "\n";
 }
 
@@ -73,10 +85,14 @@ function htmlBlock(block: ResultBlock) {
       return `<div class="block"><span class="label">CÔNG THỨC · LaTeX</span><pre class="source">${escapeHtml(math)}</pre></div>`;
     }
   }
-  const label = block.contentType === "json" || block.type === "json" ? "JSON · dữ liệu có cấu trúc" : block.contentType || block.type.replaceAll("_", " ");
+  const label = blockLabel(block);
   const inlineSvg = typeof block.metadata?.inlineSvgBase64 === "string" ? block.metadata.inlineSvgBase64 : "";
-  if (inlineSvg && (block.contentType === "mermaid" || block.type === "mermaid" || block.type === "diagram")) {
-    return `<figure class="diagram-export"><figcaption>${escapeHtml(label)}</figcaption><img alt="Sơ đồ từ tài liệu" src="data:image/svg+xml;base64,${inlineSvg}"><details><summary>Xem mã sơ đồ</summary><pre class="source">${escapeHtml(text)}</pre></details></figure>`;
+  const visual = embeddedVisualPng(block);
+  if (visual) {
+    const imageSource = inlineSvg && block.contentType !== "image" && block.type !== "image"
+      ? `data:image/svg+xml;base64,${inlineSvg}` : `data:image/png;base64,${block.metadata?.inlinePngBase64}`;
+    const caption = typeof block.metadata?.caption === "string" ? block.metadata.caption : label;
+    return `<figure class="diagram-export"><figcaption>${escapeHtml(caption)}</figcaption><img alt="${escapeHtml(String(block.metadata?.alt ?? caption))}" src="${imageSource}">${block.contentType === "mermaid" || block.type === "mermaid" || block.type === "diagram" ? `<details><summary>Xem mã sơ đồ</summary><pre class="source">${escapeHtml(text)}</pre></details>` : ""}</figure>`;
   }
   const className = isCode(block) || block.contentType === "json" || block.type === "json" || block.contentType === "mermaid" ? "source" : "content";
   return `<div class="block"><span class="label">${escapeHtml(label)}</span><pre class="${className}">${escapeHtml(text)}</pre></div>`;
@@ -85,7 +101,7 @@ function htmlBlock(block: ResultBlock) {
 export function reportToHtml(report: ReportDocument) {
   const conclusion = report.conclusion ? `<section class="report-conclusion"><h2>Kết luận</h2><p>${escapeHtml(report.conclusion)}</p></section>` : "";
   const sections = (report.sections ?? []).map(section => `<section><h2>${escapeHtml(section.title)}</h2>${section.summary ? `<p class="section-summary">${escapeHtml(section.summary)}</p>` : ""}${(section.blocks ?? []).map(htmlBlock).join("")}</section>`).join("");
-  return `<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${escapeHtml(report.title || "Báo cáo học tập")}</title><style>body{font:16px/1.65 Arial,sans-serif;color:#202235;max-width:920px;margin:48px auto;padding:0 24px}header{border-bottom:1px solid #e4e5ed;padding-bottom:24px;margin-bottom:28px}h1{font-size:32px;margin:0 0 10px}h2{font-size:22px;margin:0 0 12px}section{margin:30px 0}.section-summary{color:#62667b}.report-conclusion{padding:18px;border-left:3px solid #7965dc;background:#f8f7ff;border-radius:0 10px 10px 0}.block{margin:14px 0}.label{display:block;text-transform:uppercase;letter-spacing:.08em;font-size:11px;color:#7060c7;font-weight:700;margin-bottom:7px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f6f7fb;border-radius:8px;padding:14px;font:14px/1.65 ui-monospace,monospace}.content{background:transparent;padding:0;font:inherit}ul{padding-left:24px}.diagram-export,.formula-export{margin:18px 0;padding:16px;border:1px solid #e7e5ef;border-radius:10px;break-inside:avoid}.diagram-export img{display:block;width:100%;height:auto;max-height:720px;object-fit:contain}.diagram-export figcaption,.formula-export figcaption{font-size:11px;color:#7060c7;font-weight:700;margin-bottom:12px}.formula-export math{display:block;font-size:1.35em}.diagram-export details{margin-top:12px;font-size:12px}@media print{body{margin:0 auto;padding:0 8mm}section{break-inside:avoid}}</style></head><body><header><h1>${escapeHtml(report.title || "Báo cáo học tập")}</h1>${report.summary ? `<p>${escapeHtml(report.summary)}</p>` : ""}</header>${conclusion}${sections}</body></html>`;
+  return `<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${escapeHtml(report.title || "Báo cáo học tập")}</title><style>body{font:16px/1.65 Arial,sans-serif;color:#202235;max-width:920px;margin:48px auto;padding:0 24px}header{border-bottom:1px solid #e4e5ed;padding-bottom:24px;margin-bottom:28px}h1{font-size:32px;margin:0 0 10px}h2{font-size:22px;margin:0 0 12px}section{margin:30px 0}.section-summary{color:#62667b}.report-conclusion{padding:18px;border-left:3px solid #7965dc;background:#f8f7ff;border-radius:0 10px 10px 0}.block{margin:14px 0}.label{display:block;text-transform:uppercase;letter-spacing:.08em;font-size:11px;color:#7060c7;font-weight:700;margin-bottom:7px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f6f7fb;border-radius:8px;padding:14px;font:14px/1.65 ui-monospace,monospace}.content{background:transparent;padding:0;font:inherit}ul{padding-left:24px}.diagram-export,.formula-export{margin:18px 0;padding:16px;border:1px solid #e7e5ef;border-radius:10px;break-inside:avoid}.diagram-export img{display:block;width:100%;height:auto;max-height:720px;object-fit:contain}.diagram-export figcaption,.formula-export figcaption{font-size:11px;color:#7060c7;font-weight:700;margin-bottom:12px}.formula-export math{display:block;font-size:1.35em}.diagram-export details{margin-top:12px;font-size:12px}@media print{body{margin:0 auto;padding:0 8mm}section{break-inside:avoid}}</style></head><body><header><h1>${escapeHtml(report.title || "Báo cáo học tập")}</h1>${report.summary ? `<p>${escapeHtml(report.summary)}</p>` : ""}</header>${sections}${conclusion}</body></html>`;
 }
 
 export async function reportToPdf(report: ReportDocument): Promise<Buffer> {
@@ -100,12 +116,6 @@ export async function reportToPdf(report: ReportDocument): Promise<Buffer> {
   document.fontSize(22).fillColor("#25243b").text(report.title || "Báo cáo học tập");
   document.moveDown(0.6);
   if (report.summary) document.fontSize(11).fillColor("#55596c").text(report.summary, { lineGap: 3 });
-  if (report.conclusion) {
-    document.moveDown(0.8);
-    document.fontSize(15).fillColor("#5646aa").text("Kết luận");
-    document.moveDown(0.25);
-    document.fontSize(10).fillColor("#303247").text(report.conclusion, { lineGap: 3 });
-  }
   for (const section of report.sections ?? []) {
     document.moveDown(1);
     if (document.y > 700) document.addPage();
@@ -113,12 +123,15 @@ export async function reportToPdf(report: ReportDocument): Promise<Buffer> {
     document.moveDown(0.3);
     if (section.summary) document.fontSize(10).fillColor("#55596c").text(section.summary, { lineGap: 3 });
     for (const block of section.blocks ?? []) {
-      const diagram = embeddedDiagramPng(block);
-      if (diagram) {
-        if (document.y > 620) document.addPage();
-        document.fontSize(8).fillColor("#7568bd").text("SƠ ĐỒ");
+      const visual = embeddedVisualPng(block);
+      if (visual) {
+        const size = scaleDiagram(visual.width, visual.height, 490, 330);
+        if (document.y + size.height + 28 > 790) document.addPage();
+        document.fontSize(8).fillColor("#7568bd").text(block.contentType === "image" || block.type === "image" ? "HÌNH ẢNH" : "SƠ ĐỒ");
         document.moveDown(0.25);
-        document.image(diagram.bytes, { fit: [490, 330], align: "center" });
+        const imageTop = document.y;
+        document.image(visual.bytes, 52, imageTop, size);
+        document.y = imageTop + size.height;
         document.moveDown(0.45);
         continue;
       }
@@ -135,9 +148,15 @@ export async function reportToPdf(report: ReportDocument): Promise<Buffer> {
       }
       const content = markdownBlock(block).replace(/```[a-z]*\n?|```|\$\$\n?/g, "").trim();
       document.moveDown(0.45);
-      document.fontSize(8).fillColor("#7568bd").text(block.contentType === "json" || block.type === "json" ? "JSON · dữ liệu có cấu trúc" : block.type.replaceAll("_", " ").toUpperCase());
+      document.fontSize(8).fillColor("#7568bd").text(blockLabel(block).toUpperCase());
       document.fontSize(10).fillColor("#303247").text(content, { lineGap: 3, continued: false });
     }
+  }
+  if (report.conclusion) {
+    document.moveDown(0.8);
+    document.fontSize(15).fillColor("#5646aa").text("Kết luận");
+    document.moveDown(0.25);
+    document.fontSize(10).fillColor("#303247").text(report.conclusion, { lineGap: 3 });
   }
   document.end();
   return done;
@@ -146,15 +165,15 @@ export async function reportToPdf(report: ReportDocument): Promise<Buffer> {
 export async function reportToDocx(report: ReportDocument): Promise<Buffer> {
   const children: Paragraph[] = [new Paragraph({ text: report.title || "Báo cáo học tập", heading: HeadingLevel.TITLE })];
   if (report.summary) children.push(new Paragraph({ text: report.summary }));
-  if (report.conclusion) children.push(new Paragraph({ text: "Kết luận", heading: HeadingLevel.HEADING_1 }), new Paragraph({ text: report.conclusion }));
   for (const section of report.sections ?? []) {
     children.push(new Paragraph({ text: section.title, heading: HeadingLevel.HEADING_1 }));
     if (section.summary) children.push(new Paragraph({ text: section.summary }));
     for (const block of section.blocks ?? []) {
-      const diagram = embeddedDiagramPng(block);
-      if (diagram) {
-        const scaled = scaleDiagram(diagram.width, diagram.height, 600, 400);
-        children.push(new Paragraph({ children: [new ImageRun({ data: diagram.bytes, transformation: scaled, type: "png" })] }));
+      const visual = embeddedVisualPng(block);
+      if (visual) {
+        const scaled = scaleDiagram(visual.width, visual.height, 520, 360);
+        children.push(new Paragraph({ text: block.contentType === "image" || block.type === "image" ? "Hình ảnh" : "Sơ đồ", heading: HeadingLevel.HEADING_3 }));
+        children.push(new Paragraph({ children: [new ImageRun({ data: visual.bytes, transformation: scaled, type: "png" })] }));
         continue;
       }
       if (isFormula(block)) {
@@ -166,13 +185,20 @@ export async function reportToDocx(report: ReportDocument): Promise<Buffer> {
           continue;
         } catch { /* Preserve the labeled LaTeX source for an invalid formula. */ }
       }
-      const isJson = block.contentType === "json" || block.type === "json";
-      const label = isJson ? "JSON · dữ liệu có cấu trúc" : block.type.replaceAll("_", " ");
-      children.push(new Paragraph({ text: label, heading: HeadingLevel.HEADING_3 }));
+      children.push(new Paragraph({ text: blockLabel(block), heading: HeadingLevel.HEADING_3 }));
       const values = isList(block) && Array.isArray(block.content) ? block.content.map(String) : [blockToPlainText(block)];
       for (const value of values) children.push(new Paragraph({ text: value, bullet: isList(block) ? { level: 0 } : undefined }));
     }
   }
-  const document = new Document({ sections: [{ properties: {}, children }] });
+  if (report.conclusion) children.push(new Paragraph({ text: "Kết luận", heading: HeadingLevel.HEADING_1 }), new Paragraph({ text: report.conclusion }));
+  const document = new Document({
+    styles: { default: {
+      document: { run: { font: "Arial", size: 22, color: "303247" }, paragraph: { spacing: { after: 140, line: 320 } } },
+      title: { run: { font: "Arial", size: 36, bold: true, color: "25243B" }, paragraph: { spacing: { after: 240 } } },
+      heading1: { run: { font: "Arial", size: 28, bold: true, color: "5646AA" }, paragraph: { spacing: { before: 260, after: 120 } } },
+      heading3: { run: { font: "Arial", size: 22, bold: true, color: "7568BD" }, paragraph: { spacing: { before: 140, after: 80 } } },
+    } },
+    sections: [{ properties: { page: { margin: { top: 900, right: 900, bottom: 900, left: 900 } } }, children }],
+  });
   return Packer.toBuffer(document);
 }

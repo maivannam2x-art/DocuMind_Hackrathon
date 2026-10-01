@@ -11,4 +11,8 @@ describe("formula rasterization", () => {
     expect(stats.channels[3].max).toBeGreaterThan(0);
     expect(stats.channels[3].mean).toBeGreaterThan(0);
   });
+
+  it("rejects invalid LaTeX instead of exporting an error glyph as a formula", async () => {
+    await expect(renderFormulaPng("\\unknownCommand{x}")).rejects.toThrow("LaTeX");
+  });
 });

@@ -24,6 +24,7 @@ export async function renderFormulaPng(latex: string) {
 
 async function render(source: string) {
   const rendered = adaptor.outerHTML(mathDocument.convert(source, { display: true }));
+  if (rendered.includes('data-mml-node="merror"')) throw new Error("Công thức LaTeX không hợp lệ; giữ mã nguồn thay vì xuất ảnh lỗi.");
   const svgMatch = rendered.match(/<svg\b[\s\S]*?<\/svg>/);
   const boxMatch = svgMatch?.[0].match(/viewBox="[\d.-]+\s+[\d.-]+\s+([\d.]+)\s+([\d.]+)"/);
   if (!svgMatch || !boxMatch || /<\s*(script|foreignObject|image|a)\b|(?:href|src)\s*=/i.test(svgMatch[0])) throw new Error("Không tạo được ảnh công thức an toàn.");

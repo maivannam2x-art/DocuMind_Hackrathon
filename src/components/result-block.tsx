@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import React, { useEffect, useId, useRef, useState } from "react";
 import katex from "katex";
 import { getSupabaseAccessToken } from "@/lib/supabase-browser";
 import { scalarText, type ResultBlock } from "@/lib/result-content";
@@ -86,8 +86,12 @@ export function ResultBlockView({ block, analysisId, resultId }: { block: Result
     body = <div className="json-view"><span className="format-badge">JSON · dữ liệu có cấu trúc</span><pre>{JSON.stringify(block.content, null, 2)}</pre></div>;
   } else if (contentType === "latex" || ["formula", "math", "equation"].includes(type)) {
     const math = typeof block.metadata?.latex === "string" ? String(block.metadata.latex) : source;
-    const rendered = katex.renderToString(math.replace(/^\$\$?|\$\$?$/g, ""), { displayMode: true, throwOnError: false, trust: false, strict: "ignore" });
-    body = <div className="formula-view" aria-label="Công thức toán" dangerouslySetInnerHTML={{ __html: rendered }} />;
+    try {
+      const rendered = katex.renderToString(math.replace(/^\$\$?|\$\$?$/g, ""), { displayMode: true, throwOnError: true, trust: false, strict: "ignore" });
+      body = <div className="formula-view" aria-label="Công thức toán" dangerouslySetInnerHTML={{ __html: rendered }} />;
+    } catch {
+      body = <div className="formula-view formula-invalid"><p>Không thể dựng công thức này. Kiểm tra lại mã LaTeX với tài liệu gốc.</p><pre>{math}</pre></div>;
+    }
   } else if (contentType === "mermaid" || type === "mermaid" || (type === "diagram" && /^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|mindmap|journey|requirementDiagram)\b/.test(source.trim()))) {
     body = <MermaidDiagram source={source.replace(/^```(?:mermaid)?\s*|```$/g, "").trim()} analysisId={analysisId} resultId={resultId} />;
   } else if (contentType === "image" || type === "image") {

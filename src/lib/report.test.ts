@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import sharp from "sharp";
 import mammoth from "mammoth";
+import pdfParse from "pdf-parse";
+import JSZip from "jszip";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { reportToDocx, reportToHtml, reportToMarkdown, reportToPdf } from "@/lib/report";
 
 const report = {
@@ -66,5 +70,51 @@ describe("report export formats", () => {
     expect(pdf.length).toBeGreaterThan(1000);
     expect(docx.length).toBeGreaterThan(1000);
     await expect(mammoth.extractRawText({ buffer: docx })).resolves.toMatchObject({ value: expect.stringContaining(report.conclusion) });
+  });
+
+  it("keeps Vietnamese typography and image/formula rendering across every format", async () => {
+    const png = await sharp(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90"><rect width="160" height="90" fill="#7257e8"/><circle cx="80" cy="45" r="27" fill="#fff"/></svg>')).png().toBuffer();
+    const visualReport = {
+      title: "Tổng quan thuật toán và cơ sở dữ liệu",
+      summary: "Tóm tắt: dữ liệu đầu vào được kiểm tra, lưu trữ và xử lý có cấu trúc.",
+      conclusion: "Kết luận: kiểm thử công thức, sơ đồ và hình ảnh trước khi chia sẻ.",
+      sections: [{ title: "I. Kiến trúc xử lý", summary: "Độ trễ và luồng dữ liệu.", blocks: [
+        { type: "diagram", contentType: "mermaid" as const, content: "flowchart LR\nA[Đầu vào] --> B[Xử lý]", metadata: { inlineSvgBase64: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90"></svg>').toString("base64"), inlinePngBase64: png.toString("base64"), inlinePngWidth: 160, inlinePngHeight: 90 } },
+        { type: "image", contentType: "image" as const, content: "Ảnh nguồn", metadata: { alt: "Hình minh họa kiến trúc", caption: "Hình nguồn", inlinePngBase64: png.toString("base64"), inlinePngWidth: 160, inlinePngHeight: 90 } },
+        { type: "formula", contentType: "latex" as const, content: "T_{avg}=\\frac{1}{n}\\sum_{i=1}^{n}T_i" },
+        { type: "diagram", contentType: "mermaid" as const, content: "flowchart LR\nA-->[" },
+      ] }],
+    };
+    const [pdf, docx] = await Promise.all([reportToPdf(visualReport), reportToDocx(visualReport)]);
+    const [html, markdown] = [reportToHtml(visualReport), reportToMarkdown(visualReport)];
+    expect(html).toContain('alt="Hình minh họa kiến trúc"');
+    expect(html).toContain("data:image/png;base64,");
+    expect(html).toContain("<math");
+    expect(html).toContain("flowchart LR\nA--&gt;[");
+    expect(markdown).toContain("```mermaid");
+    expect(markdown).toContain("$$");
+    expect(pdf.toString("latin1").match(/\/Subtype \/Image/g)?.length).toBeGreaterThanOrEqual(3);
+    const extractedPdf = await pdfParse(new Uint8Array(pdf) as Buffer);
+    expect(extractedPdf.text).toContain("Tổng quan thuật toán và cơ sở dữ liệu");
+    expect(extractedPdf.text).toContain("dữ liệu đầu vào được kiểm tra, lưu trữ và xử lý");
+    expect(extractedPdf.text).toContain("Kết luận: kiểm thử công thức, sơ đồ và hình ảnh");
+    const zip = await JSZip.loadAsync(docx);
+    const styles = await zip.file("word/styles.xml")!.async("string");
+    expect(styles).toContain('w:ascii="Arial"');
+    expect(styles).toContain('w:eastAsia="Arial"');
+    expect(Object.keys(zip.files).filter(name => name.startsWith("word/media/") && name.endsWith(".png")).length).toBeGreaterThanOrEqual(2);
+    expect((await zip.file("word/document.xml")!.async("string")).match(/<wp:inline\b/g)?.length).toBeGreaterThanOrEqual(3);
+    expect((await mammoth.extractRawText({ buffer: docx })).value).toContain("Kiến trúc xử lý");
+    const outputDir = process.env.REPORT_VISUAL_OUTPUT_DIR;
+    if (outputDir) {
+      await mkdir(outputDir, { recursive: true });
+      await Promise.all([
+        writeFile(path.join(outputDir, "documind-export.pdf"), pdf),
+        writeFile(path.join(outputDir, "documind-export.docx"), docx),
+        writeFile(path.join(outputDir, "documind-export.html"), html),
+        writeFile(path.join(outputDir, "documind-export.md"), markdown),
+        writeFile(path.join(outputDir, "documind-export.json"), JSON.stringify(visualReport, null, 2)),
+      ]);
+    }
   });
 });
