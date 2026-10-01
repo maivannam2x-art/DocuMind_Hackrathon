@@ -79,7 +79,7 @@ export function mergeChunkSections(parts: Array<{ chunk: Pick<ChunkRow, "title">
 async function synthesizeOverview(analysisId: string, title: string, sections: SummarySection[]) {
   const fallback = fallbackOverview(sections, title);
   if ((process.env.LLM_PROVIDER ?? "mock").toLowerCase() !== "gemini" || sections.length < 2) return fallback;
-  const prompt = `Tài liệu: ${title}\nCác mục và tóm tắt ngắn (trích từ kết quả đã kiểm tra):\n${summaryContext(sections)}\n\nViết overview ngắn bằng tiếng Việt: lead 2–3 câu tối đa 450 ký tự; 3–7 highlights có tiêu đề cụ thể và giải thích tối đa 200 ký tự mỗi ý. Tổng hợp đúng nguồn, không thêm số liệu hoặc khẳng định không có trong danh sách. Không chép nối mọi mục thành một đoạn dài. Trả JSON {lead,highlights:[{title,detail}]}.`;
+  const prompt = `Nhãn phiên do người dùng đặt (không phải chứng cứ nguồn): ${title}\nCác mục và tóm tắt ngắn (trích từ kết quả đã kiểm tra):\n${summaryContext(sections)}\n\nViết overview ngắn bằng tiếng Việt: lead 2–3 câu tối đa 450 ký tự; 3–7 highlights có tiêu đề cụ thể và giải thích tối đa 200 ký tự mỗi ý. Chỉ dựa vào các mục và tóm tắt bên trên. Không suy ra phạm vi, số chương, thời gian hoặc sự kiện từ nhãn phiên. Không thêm số liệu hoặc khẳng định không có trong nguồn; không chép nối mọi mục thành một đoạn dài. Trả JSON {lead,highlights:[{title,detail}]}.`;
   try {
     const response = await generateLlm({
       purpose: "overview_generation", system: "Bạn biên tập bản tóm tắt điều hành của tài liệu học tập. Tôn trọng tên mục, thứ tự và chứng cứ nguồn; viết ngắn, có tiêu đề, dễ quét mắt.", prompt, timeoutMs: 35_000,

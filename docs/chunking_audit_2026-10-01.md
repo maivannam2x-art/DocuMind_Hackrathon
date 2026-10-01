@@ -30,4 +30,6 @@ Khi gửi AI, prompt có thêm đường dẫn đề mục của chunk. Khi hợ
 
 Trên bản `3e7856d`, đã dán tài liệu IT 15.028 ký tự, Review cho thấy hai root `I. Kiến trúc hệ thống` (A/B, dưới B có 1/2) và `II. Cơ sở dữ liệu` (A/B). Số đo `1.5 milliseconds` không thành heading. Chỉnh sửa văn bản rồi nhấn thẳng xác nhận: database có `edited_marker_saved=true`, trạng thái completed, 2/2 chunk hoàn thành. Kết quả hiển thị 3 section; phát hiện chunk đầu trộn ranh giới chương như nêu ở trên, nên bổ sung ngưỡng 2.500 ký tự và thêm test. Bản ngưỡng mới cần kiểm chứng trên một phiên production tiếp theo sau deploy.
 
+Overview của phiên thử đã suy diễn cụm “01 đến 10” từ nhãn phiên kiểm thử `... 01-10`. Prompt tổng hợp đã được sửa để coi tên phiên là nhãn, không phải dữ kiện nguồn.
+
 Toàn bộ 50 unit/integration test hiện tại đạt, typecheck và Next.js build đạt. Đây là kiểm thử bộ phân chia và hợp nhất trên mẫu tổng hợp, không chứng minh mô hình Gemini luôn chọn tiêu đề hay tóm tắt đúng ngữ nghĩa ở mọi tài liệu. Với nguồn mơ hồ, người dùng vẫn cần xem và sửa nội dung ở bước review. Sau deploy cần tiếp tục kiểm tra một phiên thật từ Input → Review → Processing → Result trên production.
