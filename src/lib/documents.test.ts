@@ -97,6 +97,9 @@ describe("document preparation", () => {
     const numeric = outlineText("1. Giao thức TCP\nNội dung một.\n1.1. Handshake\nBa bước.\n2. Giao thức UDP\nNội dung hai.");
     expect(numeric.map(node => node.title)).toEqual(["1. Giao thức TCP", "2. Giao thức UDP"]);
     expect(numeric[0].children[0].title).toBe("1.1. Handshake");
+    const mixed = outlineText("1. Kiến trúc\nNội dung của chương.\nA. Gateway\nXử lý request.\nB. Service\nXử lý nghiệp vụ.\n2. Dữ liệu\nNội dung chương hai.");
+    expect(mixed.map(node => node.title)).toEqual(["1. Kiến trúc", "2. Dữ liệu"]);
+    expect(mixed[0].children.map(node => node.title)).toEqual(["A. Gateway", "B. Service"]);
     expect(outlineText("1.5 milliseconds is the RTT.\nMột câu khác mô tả thời gian.")).toHaveLength(1);
     const firstAlphabetic = outlineText("A. Thiết kế\nMô tả.\nB. Triển khai\nI. Ví dụ trích dẫn\nII. Ví dụ tiếp theo\nNội dung.");
     expect(firstAlphabetic.map(node => node.title)).toEqual(["A. Thiết kế", "B. Triển khai"]);
@@ -159,6 +162,20 @@ describe("document preparation", () => {
     const source = "1. TCP\n2. UDP\n3. HTTP\nĐây là một danh sách thuật ngữ, sau đó là đoạn giải thích giao thức mạng.";
     expect(outlineText(source)).toHaveLength(1);
     expect(outlineText(source)[0].title).toBe("Tài liệu");
+  });
+
+  it("does not mix two substantial Roman chapters in one AI request", () => {
+    const sentence = "API kiểm tra quyền rồi giao service lưu transaction trong PostgreSQL. ";
+    const source = [
+      "I. Kiến trúc hệ thống", "A. Gateway", sentence.repeat(65), "B. Service", sentence.repeat(65),
+      "II. Cơ sở dữ liệu", "A. Chỉ mục", sentence.repeat(60), "B. Giao dịch", sentence.repeat(60),
+    ].join("\n");
+    const chunks = chunkText(source);
+    expect(chunks).toHaveLength(2);
+    expect(chunks[0].title).toBe("I. Kiến trúc hệ thống");
+    expect(chunks[1].title).toBe("II. Cơ sở dữ liệu");
+    expect(chunks[0].content).not.toContain("II. Cơ sở dữ liệu");
+    expect(chunks[1].content).toContain("B. Giao dịch");
   });
 
   it("splits long text into bounded overlapping chunks", () => {

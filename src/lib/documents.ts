@@ -229,6 +229,7 @@ function detectHeadings(text: string): { headings: Heading[]; rootKind?: Heading
   const supported = new Set<Heading["kind"]>([root]);
   if (root === "roman") { if (qualifies("alpha")) supported.add("alpha"); if (qualifies("number")) supported.add("number"); }
   if (root === "alpha") { if (qualifies("roman")) supported.add("roman"); if (qualifies("number")) supported.add("number"); }
+  if (root === "number" && qualifies("alpha")) supported.add("alpha");
   const numeric = candidates.filter(item => item.kind === "number");
   const acceptedNumeric = new Set<string>();
   if (supported.has("number")) {
@@ -297,6 +298,7 @@ export function chunkText(text: string): TextChunk[] {
   if (!normalized) return [];
   const limit = envInt("MAX_CHUNK_CHARS", 12000);
   const overlap = Math.min(envInt("CHUNK_OVERLAP_CHARS", 500), Math.floor(limit / 4));
+  const minMajorSection = Math.min(Math.max(400, envInt("MIN_MAJOR_SECTION_CHARS", 2500)), Math.floor(limit * 0.6));
   const sections = outlineText(normalized);
   // A heading owns only its introduction; children own the rest of its span.
   // These ordered, non-overlapping pieces preserve the complete source while
@@ -321,6 +323,9 @@ export function chunkText(text: string): TextChunk[] {
     pending = [];
   };
   for (const section of pieces) {
+    const pendingRoot = pending[0]?.title.split(" › ")[0];
+    const nextRoot = section.title.split(" › ")[0];
+    if (pending.length && pendingRoot !== nextRoot && section.start - pending[0].start >= minMajorSection) flush();
     if (section.end - section.start > limit) {
       flush();
       for (const part of splitLongSection(normalized.slice(section.start, section.end), section.title, section.start, limit, overlap)) result.push({ ...part, chunkIndex: result.length });
