@@ -51,16 +51,22 @@ async function invokeAndLog(analysisId: string, chunkId: string | null, purpose:
   }
 }
 
-function flattenSections(parts: Array<{ chunk: ChunkRow; value: ReturnType<typeof assertResult> }>) {
+export function mergeChunkSections(parts: Array<{ chunk: Pick<ChunkRow, "title">; value: ReturnType<typeof assertResult> }>) {
   const sections: Array<{ title: string; summary?: string; blocks: Array<{ type: string; content: unknown; metadata?: Record<string, unknown> }> }> = [];
   const byTitle = new Map<string, (typeof sections)[number]>();
   for (const { chunk, value } of parts) {
     for (const section of value.sections) {
       const title = section.title.trim() || chunk.title || `Phần ${sections.length + 1}`;
-      const key = title.toLocaleLowerCase();
+      const context = chunk.title || "";
+      const leaf = context.split(" › ").at(-1)?.replace(/^(?:[IVXLCDM]+|[A-Z]|\d+(?:\.\d+)*)[.)]\s+/i, "").toLocaleLowerCase() ?? "";
+      const scopedTitle = context && context !== "Tài liệu" && !context.includes(" – ") && leaf && !title.toLocaleLowerCase().includes(leaf)
+        ? `${context} — ${title}` : title;
+      // Two chapters may both contain a section named "Tổng quan". Only merge
+      // continuations from the same source context, never unrelated chapters.
+      const key = `${context}\u0000${title}`.toLocaleLowerCase();
       let target = byTitle.get(key);
       if (!target) {
-        target = { title, summary: section.summary, blocks: [] };
+        target = { title: scopedTitle, summary: section.summary, blocks: [] };
         byTitle.set(key, target);
         sections.push(target);
       }
@@ -182,7 +188,7 @@ export async function runAnalysis(identity: RequestIdentity, analysisId: string)
       const userPrompt = renderPrompt(sectionPrompt.user_prompt_template, {
         topic: itContext.specializationName,
         custom_prompt: claimed.custom_prompt ?? "",
-        content: chunk.content,
+        content: `Vị trí trong tài liệu: ${chunk.title}\n\n${chunk.content}`,
       }) + "\n\nQUY TẮC CẤU TRÚC NGUỒN: Các đề mục I/II, A/B, 1/2 và mục con trong nội dung là thứ bậc tài liệu; giữ quan hệ cha/con khi giải thích, không coi mỗi dòng bắt đầu bằng số là tiêu đề. Các đề mục ngắn trong lô này thuộc cùng ngữ cảnh. Không bỏ qua hình/sơ đồ, mã Mermaid, công thức LaTeX hoặc bảng đã được trích xuất; trả block đúng contentType, không bịa hình ảnh hay công thức không có trong nguồn.";
       try {
         let llm = await invokeAndLog(analysisId, chunk.id, "section_generation", sectionPrompt, userPrompt, chunk.retry_count + 1);
@@ -225,7 +231,7 @@ export async function runAnalysis(identity: RequestIdentity, analysisId: string)
         throw error;
       }
     }
-    const sections = flattenSections(completed);
+    const sections = mergeChunkSections(completed);
     const overview = await synthesizeOverview(analysisId, String(claimed.title || "Tài liệu"), sections);
     const resultJson = {
       title: claimed.title,

@@ -321,22 +321,26 @@ export default function Home() {
     finally { setBusy(false); setLoadingLabel(""); }
   }
 
+  async function persistReviewChanges(id: string) {
+    const custom = [`Mức phân tích: ${depth === "quick" ? "nhanh" : depth === "deep" ? "chuyên sâu" : "tiêu chuẩn"}.`, selectedSpecialization ? `Chuyên ngành IT đã chọn: ${selectedSpecialization.name}.` : "", customPrompt.trim()].filter(Boolean).join(" ");
+    await api(`/api/analyses/${id}/review`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        title: title.trim() || analysis?.title || "Phân tích mới",
+        topicCode: topicMode,
+        specializationId: topicMode === "IT" ? specializationId || null : null,
+        customPrompt: custom || null,
+        quizEnabled,
+        inputs: inputRows.map(input => ({ id: input.id, editedText: inputTexts[input.id] ?? "" })),
+      }),
+    });
+  }
+
   async function saveReview() {
     if (!analysisId) return;
     setBusy(true); setError(""); setToast(""); setLoadingLabel("Đang lưu nội dung đã chỉnh sửa và cập nhật cấu trúc...");
     try {
-      const custom = [`Mức phân tích: ${depth === "quick" ? "nhanh" : depth === "deep" ? "chuyên sâu" : "tiêu chuẩn"}.`, selectedSpecialization ? `Chuyên ngành IT đã chọn: ${selectedSpecialization.name}.` : "", customPrompt.trim()].filter(Boolean).join(" ");
-      await api(`/api/analyses/${analysisId}/review`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          title: title.trim() || analysis?.title || "Phân tích mới",
-          topicCode: topicMode,
-          specializationId: topicMode === "IT" ? specializationId || null : null,
-          customPrompt: custom || null,
-          quizEnabled,
-          inputs: inputRows.map(input => ({ id: input.id, editedText: inputTexts[input.id] ?? "" })),
-        }),
-      });
+      await persistReviewChanges(analysisId);
       await refreshReview(analysisId);
       setToast("Đã lưu nội dung và cập nhật cấu trúc tài liệu.");
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Không thể lưu nội dung."); }
@@ -349,7 +353,12 @@ export default function Home() {
     const retrying = ["failed", "processing"].includes(analysis?.status ?? "") && Boolean(analysis?.confirmed_at);
     setLoadingLabel(retrying ? "Đang thử xử lý lại phiên đã xác nhận..." : "Đang xác nhận tài liệu...");
     try {
-      if (!retrying) await api(`/api/analyses/${analysisId}/confirm`, { method: "POST" });
+      if (!retrying) {
+        await persistReviewChanges(analysisId);
+        const checked = await api<{ report: ValidationReport }>(`/api/analyses/${analysisId}/validate`, { method: "POST" });
+        if (!checked.report.valid) throw new Error(checked.report.blockingErrors.map(item => item.message).join(" ") || "Nội dung chưa hợp lệ để xử lý.");
+        await api(`/api/analyses/${analysisId}/confirm`, { method: "POST" });
+      }
       setLoadingLabel("AI đang phân tích từng phần tài liệu...");
       let completed: { status: "processing" | "completed"; completedChunks?: number; totalChunks?: number; waitMs?: number; result?: ResultJson };
       do {

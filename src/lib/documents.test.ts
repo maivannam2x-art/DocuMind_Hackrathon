@@ -110,6 +110,57 @@ describe("document preparation", () => {
     expect(chunks[0].content).toContain("```mermaid");
   });
 
+  it("keeps a long IT chapter hierarchy and splits at children before the hard character limit", () => {
+    const paragraph = "Request đi qua gateway, auth, service rồi tới PostgreSQL. ".repeat(16);
+    const source = [
+      "I. Kiến trúc API", "Mở đầu về dịch vụ và hợp đồng API.",
+      "A. Vòng đời request", paragraph,
+      "1. Kiểm tra token", "JWT được xác minh trước khi truy cập dữ liệu.",
+      "2. Gọi service", paragraph,
+      "B. Bảo mật", "Ghi log truy cập và kiểm tra quyền.",
+      "1.5 milliseconds is the latency measurement.",
+      "II. Lưu trữ dữ liệu", "PostgreSQL giữ transaction và index.",
+      "A. Mô hình quan hệ", paragraph,
+      "1.1. Khóa ngoại", "Khóa ngoại đảm bảo toàn vẹn tham chiếu.",
+      "1.2 Chỉ mục", paragraph,
+      "B. Giao dịch", paragraph,
+    ].join("\n");
+    const oldLimit = process.env.MAX_CHUNK_CHARS;
+    process.env.MAX_CHUNK_CHARS = "1500";
+    try {
+      const normalized = normalizeText(source);
+      const tree = outlineText(source);
+      expect(tree.map(node => node.title)).toEqual(["I. Kiến trúc API", "II. Lưu trữ dữ liệu"]);
+      expect(tree[0].children.map(node => node.title)).toEqual(["A. Vòng đời request", "B. Bảo mật"]);
+      expect(tree[0].children[0].children.map(node => node.title)).toEqual(["1. Kiểm tra token", "2. Gọi service"]);
+      expect(tree[1].children[0].children.map(node => node.title)).toEqual(["1.1. Khóa ngoại", "1.2 Chỉ mục"]);
+      const titles = (nodes: typeof tree): string[] => nodes.flatMap(node => [node.title, ...titles(node.children)]);
+      expect(titles(tree)).not.toContain("1.5 milliseconds is the latency measurement.");
+      expect(tree[0].end).toBe(tree[1].start);
+
+      const chunks = chunkText(source);
+      expect(chunks.length).toBeGreaterThan(2);
+      expect(chunks.every(chunk => chunk.content.length <= 1500)).toBe(true);
+      expect(chunks.some(chunk => chunk.title.includes("II. Lưu trữ dữ liệu › A. Mô hình quan hệ"))).toBe(true);
+      expect(chunks.some(chunk => chunk.content.includes("1.5 milliseconds"))).toBe(true);
+      expect(chunks.every(chunk => normalized.slice(chunk.charStart, chunk.charEnd).trim() === chunk.content)).toBe(true);
+      let covered = 0;
+      for (const chunk of chunks) {
+        expect(chunk.charStart).toBeLessThanOrEqual(covered); // overlap is fine, missing text is not
+        covered = Math.max(covered, chunk.charEnd);
+      }
+      expect(covered).toBe(normalized.length);
+    } finally {
+      if (oldLimit === undefined) delete process.env.MAX_CHUNK_CHARS; else process.env.MAX_CHUNK_CHARS = oldLimit;
+    }
+  });
+
+  it("does not turn numbered short list items into chapters without body text", () => {
+    const source = "1. TCP\n2. UDP\n3. HTTP\nĐây là một danh sách thuật ngữ, sau đó là đoạn giải thích giao thức mạng.";
+    expect(outlineText(source)).toHaveLength(1);
+    expect(outlineText(source)[0].title).toBe("Tài liệu");
+  });
+
   it("splits long text into bounded overlapping chunks", () => {
     const previous = { limit: process.env.MAX_CHUNK_CHARS, overlap: process.env.CHUNK_OVERLAP_CHARS };
     process.env.MAX_CHUNK_CHARS = "200";
@@ -142,6 +193,34 @@ describe("document preparation", () => {
     expect(chunks.every(chunk => chunk.content.length <= 12_000)).toBe(true);
     expect(chunks.at(-1)?.content).toContain("ví dụ 180");
     expect(chunks.every((chunk, index) => index === 0 || chunk.charStart >= chunks[index - 1].charStart)).toBe(true);
+  });
+
+  it("preserves 12 large Roman chapters and nested IT headings across about 400k characters", () => {
+    const roman = ["I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX", "X", "XI", "XII"];
+    const block = "Gateway nhận request; service kiểm tra dữ liệu và thực hiện transaction trong PostgreSQL. ".repeat(120);
+    const content = roman.map((mark, index) => [
+      `${mark}. Chương ${index + 1} về hệ thống IT`, `Giới thiệu chương ${index + 1}.`,
+      "A. Kiến trúc", block,
+      "1. Kiểm tra đầu vào", "Validation kiểm tra schema và phản hồi lỗi có cấu trúc.",
+      "2. Xử lý nghiệp vụ", block,
+      "B. Dữ liệu", block,
+    ].join("\n")).join("\n");
+    expect(content.length).toBeGreaterThan(300_000);
+    const tree = outlineText(content);
+    expect(tree).toHaveLength(12);
+    expect(tree[0].children.map(node => node.title)).toEqual(["A. Kiến trúc", "B. Dữ liệu"]);
+    expect(tree[11].title).toContain("XII.");
+    const chunks = chunkText(content);
+    expect(chunks.length).toBeGreaterThan(24);
+    expect(chunks.every(chunk => chunk.content.length <= 12_000)).toBe(true);
+    expect(chunks.some(chunk => chunk.title.includes("XII. Chương 12"))).toBe(true);
+    const normalized = normalizeText(content);
+    let end = 0;
+    for (const chunk of chunks) {
+      expect(chunk.charStart).toBeLessThanOrEqual(end);
+      end = Math.max(end, chunk.charEnd);
+    }
+    expect(end).toBe(normalized.length);
   });
 
   it("sends a real JPEG image to Gemini Vision and retains OCR formula", async () => {

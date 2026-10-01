@@ -183,7 +183,7 @@ function romanValue(value: string) {
   return total > 0 && total <= 3999 && canonical === value ? total : 0;
 }
 
-function detectHeadings(text: string): Heading[] {
+function detectHeadings(text: string): { headings: Heading[]; rootKind?: Heading["kind"] } {
   const candidates: Heading[] = [];
   let inFence = false;
   let offset = 0;
@@ -192,7 +192,8 @@ function detectHeadings(text: string): Heading[] {
     if (/^(```|~~~)/.test(trimmed)) inFence = !inFence;
     if (!inFence && trimmed.length <= 125) {
       const md = /^(#{1,6})\s+(.{3,110})$/.exec(trimmed);
-      const marked = /^([A-Z]|[IVXLCDM]{2,8}|\d{1,3}(?:\.\d{1,3}){0,3})[.)]\s+(.{3,110})$/.exec(trimmed);
+      const marked = /^([A-Z]|[IVXLCDM]{2,8}|\d{1,3}(?:\.\d{1,3}){0,3})[.)]\s+(.{3,110})$/.exec(trimmed)
+        ?? /^(\d{1,3}(?:\.\d{1,3}){1,3})\s+(.{3,110})$/.exec(trimmed);
       if (md) candidates.push({ title: md[2], start: offset, kind: "markdown", depth: md[1].length, ordinal: 0 });
       else if (marked && /[\p{L}]/u.test(marked[2]) && !/[.!?;:]$/.test(marked[2])) {
         const marker = marked[1];
@@ -205,7 +206,12 @@ function detectHeadings(text: string): Heading[] {
   }
   const firstPair = (kind: Heading["kind"]) => {
     const items = candidates.filter(item => item.kind === kind && item.depth === 1);
-    const index = items.findIndex((item, i) => i > 0 && item.ordinal === items[i - 1].ordinal + 1);
+    const index = items.findIndex((item, i) => {
+      if (i === 0 || item.ordinal !== items[i - 1].ordinal + 1) return false;
+      if (kind !== "number") return true;
+      const firstLineEnd = text.indexOf("\n", items[i - 1].start);
+      return firstLineEnd >= 0 && text.slice(firstLineEnd + 1, item.start).trim().length > 0;
+    });
     return index > 0 ? items[index - 1].start : Number.POSITIVE_INFINITY;
   };
   const qualifies = (kind: Heading["kind"]) => Number.isFinite(firstPair(kind));
@@ -213,26 +219,44 @@ function detectHeadings(text: string): Heading[] {
   // an isolated numbered sentence or measurement must never create a section.
   const root = candidates.some(item => item.kind === "markdown") ? "markdown"
     : ([...(["roman", "alpha", "number"] as const)]).sort((a, b) => firstPair(a) - firstPair(b)).find(qualifies);
-  if (!root) return [];
+  if (!root) return { headings: [] };
   if (qualifies("alpha")) for (const item of candidates) {
     const letter = /^([A-Z])[.)]/.exec(item.title)?.[1];
-    if (letter && letter !== "I" && item.kind === "roman" && !(root === "roman" && qualifies("roman") && item.ordinal < 10)) {
+    if (letter && letter !== "I" && item.kind === "roman" && root !== "roman") {
       item.kind = "alpha"; item.ordinal = letter.charCodeAt(0) - 64;
     }
   }
   const supported = new Set<Heading["kind"]>([root]);
   if (root === "roman") { if (qualifies("alpha")) supported.add("alpha"); if (qualifies("number")) supported.add("number"); }
   if (root === "alpha") { if (qualifies("roman")) supported.add("roman"); if (qualifies("number")) supported.add("number"); }
-  return candidates.filter(item => supported.has(item.kind) && (item.kind !== "number" || item.depth === 1 || root === "number"));
+  const numeric = candidates.filter(item => item.kind === "number");
+  const acceptedNumeric = new Set<string>();
+  if (supported.has("number")) {
+    for (const item of numeric.filter(item => item.depth === 1)) acceptedNumeric.add(item.title);
+    // A decimal measurement such as "1.5 milliseconds" is not a subsection.
+    // Nested numbering needs its parent and must start at .1 or form a sibling sequence.
+    for (let depth = 2; depth <= 4; depth++) for (const item of numeric.filter(item => item.depth === depth)) {
+      const marker = /^\d+(?:\.\d+)*/.exec(item.title)?.[0] ?? "";
+      const parts = marker.split(".");
+      const parent = parts.slice(0, -1).join(".");
+      const parentPresent = numeric.some(candidate => acceptedNumeric.has(candidate.title) &&
+        (/^\d+(?:\.\d+)*/.exec(candidate.title)?.[0] ?? "") === parent);
+      const hasSibling = numeric.some(candidate => candidate !== item && candidate.depth === depth &&
+        (/^\d+(?:\.\d+)*/.exec(candidate.title)?.[0] ?? "").startsWith(`${parent}.`) &&
+        Math.abs(candidate.ordinal - item.ordinal) === 1);
+      if (parentPresent && (item.ordinal === 1 || hasSibling)) acceptedNumeric.add(item.title);
+    }
+  }
+  return { rootKind: root, headings: candidates.filter(item => supported.has(item.kind) &&
+    (item.kind !== "number" || acceptedNumeric.has(item.title))) };
 }
 
 export function outlineText(text: string): OutlineNode[] {
   const normalized = normalizeText(text);
   if (!normalized) return [];
-  const headings = detectHeadings(normalized);
+  const { headings, rootKind } = detectHeadings(normalized);
   if (!headings.length) return [{ title: "Tài liệu", preview: normalized.slice(0, 180), start: 0, end: normalized.length, children: [] }];
-  const rootKind = headings[0].kind;
-  const rank = (item: Heading) => item.kind === "markdown" ? item.depth : item.kind === rootKind ? item.depth : item.kind === "alpha" ? 2 : 3;
+  const rank = (item: Heading) => item.kind === "markdown" ? item.depth : item.kind === rootKind ? item.depth : item.kind === "alpha" ? 2 : item.kind === "number" ? 2 + item.depth : 3;
   const roots: OutlineNode[] = [];
   const stack: Array<{ node: OutlineNode; level: number }> = [];
   if (headings[0].start > 0) roots.push({ title: "Mở đầu", preview: normalized.slice(0, headings[0].start).trim().slice(0, 180), start: 0, end: headings[0].start, children: [] });
@@ -274,15 +298,29 @@ export function chunkText(text: string): TextChunk[] {
   const limit = envInt("MAX_CHUNK_CHARS", 12000);
   const overlap = Math.min(envInt("CHUNK_OVERLAP_CHARS", 500), Math.floor(limit / 4));
   const sections = outlineText(normalized);
+  // A heading owns only its introduction; children own the rest of its span.
+  // These ordered, non-overlapping pieces preserve the complete source while
+  // giving the splitter real subsection boundaries to use before hard limits.
+  const pieces: Array<{ title: string; start: number; end: number }> = [];
+  const collect = (node: OutlineNode, parents: string[]) => {
+    const path = [...parents, node.title];
+    const ownEnd = node.children[0]?.start ?? node.end;
+    if (ownEnd > node.start) pieces.push({ title: path.join(" › "), start: node.start, end: ownEnd });
+    for (const child of node.children) collect(child, path);
+  };
+  for (const section of sections) collect(section, []);
   const result: TextChunk[] = [];
-  let pending: OutlineNode[] = [];
+  let pending: typeof pieces = [];
   const flush = () => {
     if (!pending.length) return;
     const start = pending[0].start, end = pending.at(-1)!.end;
-    result.push({ chunkIndex: result.length, title: pending.length === 1 ? pending[0].title : `${pending[0].title} – ${pending.at(-1)!.title}`, content: normalized.slice(start, end).trim(), charStart: start, charEnd: end });
+    const paths = pending.map(item => item.title.split(" › "));
+    const common = paths[0].filter((part, index) => paths.every(path => path[index] === part));
+    const title = common.length ? common.join(" › ") : pending.length === 1 ? pending[0].title : `${pending[0].title} – ${pending.at(-1)!.title}`;
+    result.push({ chunkIndex: result.length, title, content: normalized.slice(start, end).trim(), charStart: start, charEnd: end });
     pending = [];
   };
-  for (const section of sections) {
+  for (const section of pieces) {
     if (section.end - section.start > limit) {
       flush();
       for (const part of splitLongSection(normalized.slice(section.start, section.end), section.title, section.start, limit, overlap)) result.push({ ...part, chunkIndex: result.length });
