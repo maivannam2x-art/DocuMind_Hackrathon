@@ -502,8 +502,10 @@ export default function Home() {
 
   function addFiles(accepted: File[]) {
     const tooLarge = accepted.filter(file => file.size > 20 * 1024 * 1024);
-    const valid = accepted.filter(file => file.size <= 20 * 1024 * 1024);
-    if (tooLarge.length) setError(`Tệp “${tooLarge[0].name}” vượt giới hạn 20 MB.`);
+    const empty = accepted.find(file => file.size === 0);
+    const valid = accepted.filter(file => file.size > 0 && file.size <= 20 * 1024 * 1024);
+    if (empty) setError(`Tệp “${empty.name}” không có dữ liệu. Hãy chọn lại tệp gốc từ thiết bị.`);
+    else if (tooLarge.length) setError(`Tệp “${tooLarge[0].name}” vượt giới hạn 20 MB.`);
     else if (files.length + valid.length > 10) setError("Mỗi phân tích chỉ nhận tối đa 10 tệp. Hãy bỏ bớt tệp rồi thử lại.");
     else setError("");
     setFiles(current => [...current, ...valid].slice(0, 10));
