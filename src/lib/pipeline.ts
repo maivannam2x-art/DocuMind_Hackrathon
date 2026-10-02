@@ -1,3 +1,6 @@
+import { analysisDepth, depthInstructions } from "@/lib/analysis-depth";
+import { envInt } from "@/lib/db";
+import { startActivity, finishActivity } from "@/lib/activity";
 import { privateLogPayload } from "@/lib/log-privacy";
 import {
   quizSettings,
@@ -102,8 +105,15 @@ async function invokeAndLog(
   prompt: PromptRow,
   userPrompt: string,
   attempt: number,
+  label?: string,
 ) {
   const request = {
+    analysisId,
+    activityLabel: label,
+    depth:
+      purpose === "section_generation"
+        ? analysisDepth(/Mức phân tích: [^.]+\./.exec(userPrompt)?.[0])
+        : undefined,
     purpose,
     system: prompt.system_prompt,
     prompt: userPrompt,
@@ -203,6 +213,7 @@ async function synthesizeOverview(
   const prompt = `Nhãn phiên do người dùng đặt (không phải chứng cứ nguồn): ${title}\nCác mục và tóm tắt ngắn (trích từ kết quả đã kiểm tra):\n${summaryContext(sections)}\n\nViết overview ngắn bằng tiếng Việt: lead 2–3 câu tối đa 450 ký tự; 3–7 highlights có tiêu đề cụ thể và giải thích tối đa 200 ký tự mỗi ý. Chỉ dựa vào các mục và tóm tắt bên trên. Không suy ra phạm vi, số chương, thời gian hoặc sự kiện từ nhãn phiên. Không thêm số liệu hoặc khẳng định không có trong nguồn; không chép nối mọi mục thành một đoạn dài. Trả JSON {lead,highlights:[{title,detail}]}.`;
   try {
     const response = await generateLlm({
+      analysisId,
       purpose: "overview_generation",
       system:
         "Bạn biên tập bản tóm tắt điều hành của tài liệu học tập. Tôn trọng tên mục, thứ tự và chứng cứ nguồn; viết ngắn, có tiêu đề, dễ quét mắt.",
@@ -487,7 +498,7 @@ export async function runAnalysis(
       chunk: ChunkRow;
       value: ReturnType<typeof assertResult>;
     }> = [];
-    for (const chunk of chunks as ChunkRow[]) {
+    const processChunk = async (chunk: ChunkRow) => {
       let invalidSavedContent = false;
       if (chunk.status === "complete" && chunk.generated_content) {
         try {
@@ -495,7 +506,7 @@ export async function runAnalysis(
             chunk,
             value: assertResult(chunk.generated_content),
           });
-          continue;
+          return;
         } catch {
           invalidSavedContent = true;
         }
@@ -508,7 +519,7 @@ export async function runAnalysis(
       else if (chunk.status === "processing")
         claim = claim
           .eq("status", "processing")
-          .lt("updated_at", new Date(Date.now() - 180_000).toISOString());
+          .lt("updated_at", new Date(Date.now() - 300_000).toISOString());
       else claim = claim.in("status", ["pending", "failed"]);
       const { data: claimedChunk, error: claimChunkError } = await claim
         .select("id")
@@ -520,15 +531,10 @@ export async function runAnalysis(
           "Không thể bắt đầu phần tài liệu tiếp theo.",
           claimChunkError.message,
         );
-      if (!claimedChunk)
-        return {
-          analysisId,
-          status: "processing" as const,
-          completedChunks: completed.length,
-          totalChunks: chunks.length,
-          waitMs: 1500,
-        };
+      if (!claimedChunk) return;
       const userPrompt =
+        depthInstructions(analysisDepth(claimed.custom_prompt)) +
+        "\n" +
         renderPrompt(sectionPrompt.user_prompt_template, {
           topic: itContext.specializationName,
           custom_prompt: claimed.custom_prompt ?? "",
@@ -543,6 +549,7 @@ export async function runAnalysis(
           sectionPrompt,
           userPrompt,
           chunk.retry_count + 1,
+          `Phân tích phần ${chunk.chunk_index + 1}: ${chunk.title ?? "Nội dung"}`,
         );
         let value: ReturnType<typeof assertResult>;
         try {
@@ -591,16 +598,6 @@ export async function runAnalysis(
           );
         chunk.generated_content = value;
         completed.push({ chunk, value });
-        // One Gemini chunk per request. The next request resumes from persisted
-        // chunks, so browser refreshes and Vercel time limits do not restart a
-        // long document from the beginning.
-        if (completed.length < chunks.length)
-          return {
-            analysisId,
-            status: "processing" as const,
-            completedChunks: completed.length,
-            totalChunks: chunks.length,
-          };
       } catch (error) {
         await db
           .from("analysis_chunks")
@@ -612,13 +609,54 @@ export async function runAnalysis(
           .eq("id", chunk.id);
         throw error;
       }
+    };
+    const concurrency = Math.min(4, envInt("LLM_CONCURRENCY", 3));
+    const pendingChunks = (chunks as ChunkRow[]).filter((chunk) => {
+      if (chunk.status !== "complete" || !chunk.generated_content) return true;
+      try {
+        assertResult(chunk.generated_content);
+        return false;
+      } catch {
+        return true;
+      }
+    });
+    if (pendingChunks.length) {
+      const outcome = await Promise.allSettled(
+        pendingChunks.slice(0, concurrency).map(processChunk),
+      );
+      const rejected = outcome.find((item) => item.status === "rejected");
+      if (rejected?.status === "rejected") throw rejected.reason;
     }
+    const { data: refreshedChunks, error: refreshError } = await db
+      .from("analysis_chunks")
+      .select("*")
+      .eq("analysis_id", analysisId)
+      .order("chunk_index");
+    if (refreshError)
+      throw new ApiError(
+        503,
+        "PROGRESS_UNAVAILABLE",
+        "Không tải được checkpoint.",
+      );
+    completed.length = 0;
+    for (const chunk of (refreshedChunks ?? []) as ChunkRow[])
+      if (chunk.status === "complete" && chunk.generated_content)
+        completed.push({ chunk, value: assertResult(chunk.generated_content) });
+    if (completed.length < chunks.length)
+      return {
+        analysisId,
+        status: "processing" as const,
+        completedChunks: completed.length,
+        totalChunks: chunks.length,
+        waitMs: 1500,
+      };
+    const sourceChunks = completed.map((item) => item.chunk);
     if (claimed.quiz_enabled) {
       const pending = await continueQuizCandidates(
         analysisId,
         itContext.topicId,
         itContext.specializationId,
-        chunks as ChunkRow[],
+        sourceChunks,
         quizSettings(claimed.quiz_settings),
       );
       if (pending)
@@ -665,7 +703,13 @@ export async function runAnalysis(
         totalChunks: chunks.length,
         waitMs: 1500,
       };
+    const mergeActivity = await startActivity(
+      analysisId,
+      "system",
+      "Gộp kết quả theo thứ tự nguồn và chuẩn hóa cấu trúc",
+    );
     const sections = mergeChunkSections(completed);
+    await finishActivity(mergeActivity, "succeeded");
     const overview = await synthesizeOverview(
       analysisId,
       String(claimed.title || "Tài liệu"),
@@ -778,12 +822,58 @@ export async function continueQuizCandidates(
   chunks: ChunkRow[],
   settings: QuizSettings,
 ) {
+  const quotas = quizQuotas(
+    chunks.map((c) => c.content.length),
+    settings.questionCount,
+  );
+  const pending = chunks
+    .map((c, i) => ({ c, i }))
+    .filter(({ c, i }) => !c.quiz_finished && quotas[i] > 0);
+  if (!pending.length) return null;
+  const results = await Promise.allSettled(
+    pending
+      .slice(0, Math.min(4, envInt("LLM_CONCURRENCY", 3)))
+      .map(({ i }) =>
+        continueQuizChunk(
+          analysisId,
+          topicId,
+          specializationId,
+          chunks,
+          settings,
+          i,
+        ),
+      ),
+  );
+  const failed = results.find((r) => r.status === "rejected");
+  if (failed?.status === "rejected") throw failed.reason;
+  return {
+    quizCompleted: chunks.filter((c, i) => c.quiz_finished && quotas[i] > 0)
+      .length,
+    quizTotal: quotas.filter((n) => n > 0).length,
+    waitMs: results.some(
+      (r) => r.status === "fulfilled" && r.value?.waitMs === 1500,
+    )
+      ? 1500
+      : 500,
+  };
+}
+
+async function continueQuizChunk(
+  analysisId: string,
+  topicId: string | null,
+  specializationId: string | null,
+  chunks: ChunkRow[],
+  settings: QuizSettings,
+  selectedIndex?: number,
+) {
   const db = getAdminDb(),
     quotas = quizQuotas(
       chunks.map((c) => c.content.length),
       settings.questionCount,
     );
-  const next = chunks.findIndex((c, i) => !c.quiz_finished && quotas[i] > 0);
+  const next =
+    selectedIndex ??
+    chunks.findIndex((c, i) => !c.quiz_finished && quotas[i] > 0);
   if (next < 0) return null;
   const chunk = chunks[next],
     now = new Date().toISOString();
@@ -837,6 +927,7 @@ export async function continueQuizCandidates(
         userPrompt +
           "\nBắt buộc có questionType. true_false có đúng 2 lựa chọn Đúng/Sai; multiple_choice có 4 lựa chọn.",
         batches,
+        `Quiz phần ${chunk.chunk_index + 1}: ${chunk.title ?? "Nội dung"} · đợt ${batches} · tối đa ${count} câu`,
       );
       const fresh = normalizeQuizCandidates(result.value, chunk.id).filter(
         (q) =>
@@ -876,6 +967,7 @@ export async function continueQuizCandidates(
       "QUIZ_PROGRESS_SAVE_FAILED",
       "Không lưu được lượt tạo câu hỏi. Hãy tiếp tục lại.",
     );
+  chunk.quiz_finished = finished;
   return {
     quizCompleted:
       chunks.filter((c) => c.quiz_finished).length + (finished ? 1 : 0),
@@ -904,9 +996,7 @@ async function generateQuiz(
   );
   for (const [index, item] of completed.entries()) {
     const saved = (item.value ?? item.chunk.generated_content) as
-      | { quizCandidates?: QuizCandidate[] }
-      | null
-      | undefined;
+      { quizCandidates?: QuizCandidate[] } | null | undefined;
     const generated = Array.isArray(saved?.quizCandidates)
       ? saved.quizCandidates
       : [];

@@ -172,6 +172,20 @@ async function fixture(page: Page, pauseCompletes = false) {
                 citations: ["II. SQL"],
               },
             };
+    else if (path.endsWith("/activity"))
+      data = {
+        analysis: {
+          id,
+          title: "IT test",
+          status,
+          quiz_enabled: true,
+          confirmed_at: ["ready", "processing", "completed"].includes(status)
+            ? "2026-10-02"
+            : null,
+        },
+        items: [],
+        chunks: [{ status: status === "completed" ? "complete" : "pending" }],
+      };
     else if (path.endsWith("/metrics"))
       data = {
         calls: 2,
@@ -191,7 +205,9 @@ async function fixture(page: Page, pauseCompletes = false) {
           quiz_enabled: true,
           quiz_settings: quizSettings,
           validation_report: report,
-          confirmed_at: status === "ready" ? "2026-10-02" : null,
+          confirmed_at: ["ready", "processing", "completed"].includes(status)
+            ? "2026-10-02"
+            : null,
         },
         inputs: [
           { id: "input", original_name: "Văn bản", normalized_text: source },
@@ -235,7 +251,7 @@ test("input → review → confirm → result, typed visuals, quiz, chat and exp
 }) => {
   const events = await fixture(page);
   await page.goto("/");
-  await page.getByLabel("Số câu mong muốn").fill("100");
+  await page.getByLabel("Số câu mong muốn").fill("250");
   await complete(page);
   expect(events.findIndex((x) => x.endsWith("/confirm"))).toBeLessThan(
     events.findIndex((x) => x.endsWith("/run")),
@@ -339,4 +355,157 @@ test("pause reconciles a completed server session instead of reopening review", 
   await expect(
     page.getByRole("heading", { name: "Kiểm tra tài liệu trước khi xử lý" }),
   ).toHaveCount(0);
+});
+
+test("restores an oversized failed draft without raw report fields or an ingest retry", async ({
+  page,
+}) => {
+  const events = await fixture(page);
+  const analysis = {
+    id,
+    title: "PDF cần tách",
+    status: "failed",
+    error_code: "PDF_TOO_MANY_PAGES",
+    error_message: "PDF vượt giới hạn số trang.",
+    validation_report: {},
+    confirmed_at: null,
+  };
+  await page.route(`**/api/analyses/${id}**`, async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("/activity"))
+      await route.fulfill({
+        json: { data: { analysis, items: [], chunks: [] } },
+      });
+    else if (path.endsWith(id))
+      await route.fulfill({
+        json: {
+          data: {
+            analysis,
+            inputs: [
+              {
+                id: "input",
+                status: "error",
+                metadata: { errorCode: "PDF_TOO_MANY_PAGES" },
+              },
+            ],
+            result: null,
+          },
+        },
+      });
+    else await route.fallback();
+  });
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto(`/?analysis=${id}`);
+  await expect(
+    page.getByRole("button", { name: "Chọn tài liệu khác / tạo phiên mới" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("PDF vượt giới hạn số trang.", { exact: true }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(
+    page.getByRole("button", { name: "Chọn tài liệu khác / tạo phiên mới" }),
+  ).toBeVisible();
+  expect(events.some((e) => e.endsWith("/ingest"))).toBe(false);
+  expect(errors).toEqual([]);
+});
+test("reloads partial page extraction and resumes to review without confirming analysis", async ({
+  page,
+}) => {
+  const events = await fixture(page);
+  let read = false;
+  const analysis = {
+    id,
+    title: "PDF đang đọc",
+    status: "draft",
+    confirmed_at: null,
+    validation_report: {},
+  };
+  await page.route(`**/api/analyses/${id}**`, async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("/activity"))
+      await route.fulfill({
+        json: {
+          data: {
+            analysis,
+            items: [
+              {
+                id: "task",
+                actor: "ai",
+                label: "Đọc PDF · trang 3",
+                status: "running",
+                model: "Gemini fixture",
+                created_at: new Date().toISOString(),
+              },
+            ],
+            chunks: [],
+          },
+        },
+      });
+    else if (path.endsWith("/ingest")) {
+      read = true;
+      await route.fulfill({
+        json: {
+          data: { analysisId: id, nextStep: "validate", remainingFiles: 0 },
+        },
+      });
+    } else if (path.endsWith(id))
+      await route.fulfill({
+        json: {
+          data: {
+            analysis,
+            inputs: [
+              {
+                id: "input",
+                original_name: "PDF",
+                status: read ? "extracted" : "staged",
+                metadata: {
+                  extractionProgress: { nextUnit: 3, totalUnits: 8 },
+                },
+                normalized_text: read ? source : "I. API",
+              },
+            ],
+          },
+        },
+      });
+    else await route.fallback();
+  });
+  await page.goto(`/?analysis=${id}`);
+  await expect(
+    page.getByRole("button", { name: "Tiếp tục đọc tài liệu" }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(
+    page.getByRole("button", { name: "Tiếp tục đọc tài liệu" }),
+  ).toBeVisible();
+  await expect(page.getByText("Đọc PDF · trang 3")).toBeVisible();
+  await page.getByRole("button", { name: "Tiếp tục đọc tài liệu" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Kiểm tra tài liệu trước khi xử lý" }),
+  ).toBeVisible();
+  expect(events.some((e) => e.endsWith("/confirm"))).toBe(false);
+});
+test("searches predefined choices and falls back to automatic specialization", async ({
+  page,
+}) => {
+  await fixture(page);
+  await page.goto("/");
+  await expect(page.getByLabel("Số câu mong muốn")).toHaveValue("20");
+  const topic = page.getByRole("combobox", {
+    name: "Chủ đề tài liệu",
+    exact: true,
+  });
+  await topic.fill("cong nghe");
+  await topic.press("Enter");
+  await expect(topic).toHaveValue("Công nghệ thông tin");
+  const specialization = page.getByRole("combobox", {
+    name: "Chuyên ngành IT",
+    exact: true,
+  });
+  await specialization.fill("Unknown subject");
+  await page
+    .getByRole("button", { name: "Tự nhận diện chuyên ngành", exact: true })
+    .click();
+  await expect(specialization).toHaveValue("Tự nhận diện chuyên ngành");
 });

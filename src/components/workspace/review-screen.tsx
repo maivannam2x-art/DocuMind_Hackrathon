@@ -91,9 +91,12 @@ export function ReviewScreen({ workspace }: { workspace: WorkspaceContext }) {
             metadata={input.metadata}
             headings={(() => {
               const titles = (nodes: OutlineItem[]): string[] =>
-                nodes.flatMap((node) => [node.title, ...titles(node.children)]);
+                nodes.flatMap((node) => [
+                  node.title,
+                  ...titles(node.children ?? []),
+                ]);
               return titles(
-                report?.inputs.find((row) => row.id === input.id)?.structure ??
+                report?.inputs?.find((row) => row.id === input.id)?.structure ??
                   [],
               );
             })()}
@@ -114,10 +117,10 @@ export function ReviewScreen({ workspace }: { workspace: WorkspaceContext }) {
           </div>
         </div>
         <div className="outline-list">
-          {report?.inputs.map((input) => (
+          {report?.inputs?.map((input) => (
             <div className="outline-document" key={input.id}>
               <h4>{input.name || "Tài liệu"}</h4>
-              <OutlineTree items={input.structure} />
+              <OutlineTree items={input.structure ?? []} />
             </div>
           ))}
           {!report && <OutlineTree items={allOutline} />}

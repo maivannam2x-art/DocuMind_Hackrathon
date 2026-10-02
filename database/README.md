@@ -42,3 +42,9 @@ Sau các file 01–04, chạy lần lượt:
 Hai bản migration tương ứng nằm trong `supabase/migrations/`. Các file đều dùng `IF NOT EXISTS`/`CREATE OR REPLACE`; không xóa nội dung tài liệu hoặc thay đổi quyền sở hữu. Đã áp dụng vào project hiện tại; khi chuyển production mới vẫn phải chạy đủ các file theo thứ tự.
 
 Log LLM mặc định chỉ lưu hash và số ký tự; token/thời gian vẫn được giữ. `LLM_LOG_CONTENT=true` chỉ dùng chẩn đoán có chủ đích. `LLM_LOG_RETENTION_DAYS=30` đặt TTL và cron dọn hàng ngày. Không đưa service role/Gemini key vào GitHub.
+
+## Cập nhật phục hồi phiên, tiến độ và danh mục
+
+Chạy tiếp `07_resumable_activity.sql`, rồi `08_expanded_it_catalog.sql` sau 01–06. File 07 thêm lease đọc đầu vào và nhật ký AI/hệ thống theo phiên, đồng thời đổi các draft lỗi giới hạn thành failed (không xóa tài liệu). File 08 thêm 24 chuyên ngành và prompt tương ứng; tổng hiện tại 73 chuyên ngành active. Có thể chạy lại các file này.
+
+`analysis_activity` là bảng backend-only: RLS bật và anon/authenticated không có quyền; API `/activity` kiểm tra chủ sở hữu. Nhật ký lưu nhãn tác vụ/model/trạng thái, không lưu nội dung suy nghĩ hoặc sao chép tài liệu. FK cascade dọn nhật ký khi phiên được dọn theo TTL.

@@ -1,4 +1,5 @@
 "use client";
+import { ActivityPanel } from "@/components/activity-panel";
 import { ResultTabs } from "@/components/workspace/result-tabs";
 import { AuthDialog } from "@/components/auth-dialog";
 import { useWorkspace } from "@/hooks/use-workspace";
@@ -210,7 +211,9 @@ export default function Home() {
                       ? "Mở lại tài liệu, kết quả hoặc phiên xử lý đang dang dở."
                       : screen === "result"
                         ? "Các ý chính, phân tích và công cụ học tập từ tài liệu của bạn."
-                        : "Tài liệu đã xác nhận. DocuMind đang phân tích theo từng phần."}
+                        : analysis?.confirmed_at
+                          ? "Tài liệu đã xác nhận. DocuMind đang phân tích theo từng phần."
+                          : "Đang đọc đầu vào. Văn bản, bảng và hình được lưu theo checkpoint."}
               </p>
             </div>
             {screen === "result" && (
@@ -251,6 +254,10 @@ export default function Home() {
               quizEnabled={Boolean(analysis?.quiz_enabled)}
               quizCount={quizQuestions.length}
             />
+          )}
+
+          {screen !== "input" && screen !== "history" && (
+            <ActivityPanel items={workspace.activities} />
           )}
 
           {error && (

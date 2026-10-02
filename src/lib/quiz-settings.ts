@@ -1,6 +1,11 @@
 import { z } from "zod";
 export const quizSettingsSchema = z.object({
-  questionCount: z.number().int().min(1).max(100).default(20),
+  questionCount: z
+    .number()
+    .int()
+    .min(1)
+    .max(Number.MAX_SAFE_INTEGER)
+    .default(20),
   difficulty: z.enum(["mixed", "easy", "medium", "hard"]).default("mixed"),
   types: z
     .array(z.enum(["multiple_choice", "true_false"]))

@@ -1,4 +1,5 @@
 "use client";
+import { SearchSelect } from "@/components/search-select";
 import type { WorkspaceContext } from "@/hooks/use-workspace";
 
 import type { QuizSettings } from "@/lib/quiz-settings";
@@ -48,17 +49,19 @@ export function InputScreen({ workspace }: { workspace: WorkspaceContext }) {
         <div className="form-grid">
           <label className="field">
             <span>Chủ đề tài liệu</span>
-            <select
+            <SearchSelect
+              label="Chủ đề tài liệu"
               value={topicMode}
-              onChange={(event) => {
-                setTopicMode(event.target.value);
+              onChange={(value) => {
+                setTopicMode(value);
                 setSpecializationId("");
               }}
-            >
-              <option value="AUTO">Tự nhận diện chủ đề</option>
-              <option value="IT">Công nghệ thông tin</option>
-              <option value="GENERAL">Chủ đề chung</option>
-            </select>
+              options={[
+                { value: "AUTO", label: "Tự nhận diện chủ đề" },
+                { value: "IT", label: "Công nghệ thông tin" },
+                { value: "GENERAL", label: "Chủ đề chung" },
+              ]}
+            />
             <small>
               {topicMode === "IT"
                 ? "Ưu tiên prompt kỹ thuật theo chuyên ngành IT."
@@ -77,17 +80,20 @@ export function InputScreen({ workspace }: { workspace: WorkspaceContext }) {
               <span>
                 Chuyên ngành IT <em>Không bắt buộc</em>
               </span>
-              <select
+              <SearchSelect
+                label="Chuyên ngành IT"
                 value={specializationId}
-                onChange={(event) => setSpecializationId(event.target.value)}
-              >
-                <option value="">Tự nhận diện chuyên ngành</option>
-                {selectedTopic?.specializations.map((item) => (
-                  <option value={item.id} key={item.id}>
-                    {item.name}
-                  </option>
-                ))}
-              </select>
+                onChange={setSpecializationId}
+                fallbackValue=""
+                options={[
+                  { value: "", label: "Tự nhận diện chuyên ngành" },
+                  ...(selectedTopic?.specializations ?? []).map((item) => ({
+                    value: item.id,
+                    label: item.name,
+                    description: item.description,
+                  })),
+                ]}
+              />
               <small>
                 Nếu không chọn, hệ thống sẽ nhận diện từ nội dung tài liệu.
               </small>
@@ -123,7 +129,11 @@ export function InputScreen({ workspace }: { workspace: WorkspaceContext }) {
         <div className="field-heading">
           <div>
             <span>Mức phân tích</span>
-            <small>Chọn độ chi tiết của phần giải thích.</small>
+            <small>
+              Nhanh: ý chính. Tiêu chuẩn: giải thích cân bằng. Chuyên sâu: cơ
+              chế, điều kiện và giới hạn; Gemini suy nghĩ cao hơn khi model hỗ
+              trợ.
+            </small>
           </div>
         </div>
         <div
@@ -183,59 +193,63 @@ export function InputScreen({ workspace }: { workspace: WorkspaceContext }) {
               <input
                 type="number"
                 min={1}
-                max={100}
                 value={quizConfig.questionCount}
                 onChange={(e) =>
                   setQuizConfig((c) => ({
                     ...c,
                     questionCount: Math.max(
                       1,
-                      Math.min(100, Number(e.target.value) || 1),
+                      Math.trunc(Number(e.target.value) || 20),
                     ),
                   }))
                 }
               />
               <small>
-                Tối đa 100; có thể ít hơn nếu nguồn không đủ kiến thức.
+                Mặc định 20 câu. Bạn có thể nhập số lượng mong muốn; nguồn không
+                đủ sẽ ghi rõ số câu thực tế.
               </small>
             </label>
             <label className="field">
               <span>Độ khó quiz</span>
-              <select
+              <SearchSelect
+                label="Độ khó quiz"
                 value={quizConfig.difficulty}
-                onChange={(e) =>
+                onChange={(value) =>
                   setQuizConfig((c) => ({
                     ...c,
-                    difficulty: e.target.value as QuizSettings["difficulty"],
+                    difficulty: value as QuizSettings["difficulty"],
                   }))
                 }
-              >
-                <option value="mixed">Kết hợp</option>
-                <option value="easy">Dễ</option>
-                <option value="medium">Trung bình</option>
-                <option value="hard">Khó</option>
-              </select>
+                options={[
+                  { value: "mixed", label: "Kết hợp" },
+                  { value: "easy", label: "Dễ" },
+                  { value: "medium", label: "Trung bình" },
+                  { value: "hard", label: "Khó" },
+                ]}
+              />
             </label>
             <label className="field">
               <span>Loại câu hỏi</span>
-              <select
+              <SearchSelect
+                label="Loại câu hỏi"
                 value={
                   quizConfig.types.length === 2 ? "mixed" : quizConfig.types[0]
                 }
-                onChange={(e) =>
+                onChange={(value) =>
                   setQuizConfig((c) => ({
                     ...c,
                     types:
-                      e.target.value === "mixed"
+                      value === "mixed"
                         ? ["multiple_choice", "true_false"]
-                        : [e.target.value as "multiple_choice" | "true_false"],
+                        : [value as QuizSettings["types"][number]],
                   }))
                 }
-              >
-                <option value="multiple_choice">Trắc nghiệm</option>
-                <option value="true_false">Đúng / sai</option>
-                <option value="mixed">Kết hợp</option>
-              </select>
+                options={[
+                  { value: "multiple_choice", label: "Trắc nghiệm" },
+                  { value: "true_false", label: "Đúng / sai" },
+                  { value: "mixed", label: "Kết hợp" },
+                ]}
+              />
             </label>
           </div>
         )}

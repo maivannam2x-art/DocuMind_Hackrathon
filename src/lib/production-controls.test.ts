@@ -1,3 +1,5 @@
+import { testCatalog } from "./testing-gemini";
+import { resetModelCache } from "./gemini-routing";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { quizSettings, quizSettingsSchema, quizQuotas } from "./quiz-settings";
 import { retrieveChatContext, searchTerms } from "./chat-context";
@@ -15,7 +17,10 @@ afterEach(() => {
 describe("quiz settings and source allocation", () => {
   it("accepts 100 questions and rejects invalid user counts", () => {
     expect(quizSettings({ questionCount: 100 }).questionCount).toBe(100);
-    for (const n of [0, 101, 1.5])
+    expect(quizSettingsSchema.parse({ questionCount: 250 }).questionCount).toBe(
+      250,
+    );
+    for (const n of [0, -1, 1.5, Infinity])
       expect(quizSettingsSchema.safeParse({ questionCount: n }).success).toBe(
         false,
       );
@@ -203,7 +208,12 @@ describe("Gemini transport", () => {
         }),
       ),
     );
-    vi.stubGlobal("fetch", fetch);
+    resetModelCache();
+    vi.stubGlobal("fetch", (url: string | URL, init: RequestInit) =>
+      String(url).includes(":generateContent")
+        ? fetch(url, init)
+        : Promise.resolve(testCatalog()),
+    );
     await generateLlm({ purpose: "chat", system: "test", prompt: "test" });
     const [url, options] = fetch.mock.calls[0];
     expect(url).not.toContain("key=");
@@ -222,7 +232,7 @@ describe("Gemini transport", () => {
     );
     await expect(
       generateLlm({ purpose: "chat", system: "test", prompt: "test" }),
-    ).rejects.toMatchObject({ code: "LLM_PROVIDER_ERROR", status: 502 });
+    ).rejects.toMatchObject({ code: "LLM_TIMEOUT", status: 503 });
   });
 });
 it("retains analysis and progress when switching screens", () => {

@@ -14,6 +14,9 @@ export function ProcessingScreen({
     busy,
     loadingLabel,
     confirmAndRun,
+    retryIncompleteUpload,
+    pendingIngestId,
+    setScreen,
   } = workspace;
 
   return (
@@ -60,10 +63,19 @@ export function ProcessingScreen({
             Bạn có thể đóng trang và mở lại phiên từ Lịch sử để tiếp tục.
           </small>
         </div>
+        {!analysis?.confirmed_at && (
+          <p>
+            Đọc đầu vào: hệ thống parse văn bản/bảng Word/CSV; AI đọc trang PDF,
+            ảnh và công thức cần nhận diện. Chưa chạy phân tích kiến thức trước
+            khi bạn xác nhận.
+          </p>
+        )}
         <ol className="processing-steps">
           {[
             {
-              label: "Xác nhận tài liệu",
+              label: analysis?.confirmed_at
+                ? "Xác nhận tài liệu"
+                : "Đọc văn bản, bảng, ảnh và công thức",
               done: Boolean(analysis?.confirmed_at) || Boolean(progress),
             },
             { label: "Nhận diện chủ đề", done: Boolean(progress) },
@@ -101,6 +113,20 @@ export function ProcessingScreen({
             onClick={() => operation.current?.abort()}
           >
             Tạm dừng sau lượt hiện tại
+          </button>
+        )}
+        {!busy && !analysis?.confirmed_at && (
+          <button
+            className="button button-primary"
+            onClick={() =>
+              pendingIngestId
+                ? void retryIncompleteUpload()
+                : setScreen("input")
+            }
+          >
+            {pendingIngestId
+              ? "Tiếp tục đọc tài liệu"
+              : "Chọn tài liệu khác / tạo phiên mới"}
           </button>
         )}
         {["ready", "failed", "processing"].includes(analysis?.status ?? "") &&

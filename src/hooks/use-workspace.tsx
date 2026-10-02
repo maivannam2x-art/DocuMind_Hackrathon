@@ -6,6 +6,9 @@ import {
   type FlowState,
   type FlowAction,
 } from "@/lib/workspace-flow";
+import { resumeState } from "@/lib/resume-state";
+import { ingestBlocked } from "@/lib/ingest-state";
+import type { Activity } from "@/lib/activity";
 import { AppIcon } from "@/components/app-icon";
 import { INPUT_LIMITS, FILE_ACCEPT, supportedFile } from "@/lib/limits";
 import { quizSettings, type QuizSettings } from "@/lib/quiz-settings";
@@ -349,6 +352,8 @@ export function useWorkspace() {
     [],
   );
   const [analysisId, setAnalysisId] = useState<string | null>(null);
+  const [activities, setActivities] = useState<Activity[]>([]);
+  const restored = useRef(false);
   const [topics, setTopics] = useState<Topic[]>([]);
   const [files, setFiles] = useState<File[]>([]);
   const [pendingUploads, setPendingUploads] = useState<SignedUpload[]>([]);
@@ -405,7 +410,7 @@ export function useWorkspace() {
     [selectedTopic, specializationId],
   );
   const allOutline = useMemo(
-    () => report?.inputs.flatMap((input) => input.structure) ?? outline,
+    () => report?.inputs?.flatMap((input) => input.structure ?? []) ?? outline,
     [report, outline],
   );
   const resultOverview = useMemo(
@@ -604,7 +609,9 @@ export function useWorkspace() {
         { method: "POST" },
       );
       setReport(validated.report);
-      setOutline(validated.report.inputs.flatMap((item) => item.structure));
+      setOutline(
+        (validated.report.inputs ?? []).flatMap((item) => item.structure),
+      );
       const details = await api<{ analysis: Analysis; inputs: ApiInput[] }>(
         `/api/analyses/${id}?includeContent=true`,
       );
@@ -628,12 +635,14 @@ export function useWorkspace() {
   );
 
   async function ingestAllFiles(id: string) {
+    setScreen("processing");
     operation.current = new AbortController();
     await resumableLoop(
       async () =>
         api<{
           nextStep: string;
           remainingFiles: number;
+          waitMs?: number;
           progress?: { nextUnit: number; totalUnits: number };
         }>(`/api/analyses/${id}/ingest`, {
           method: "POST",
@@ -641,6 +650,11 @@ export function useWorkspace() {
         }),
       (value) => value.nextStep !== "ingest",
       (response) => {
+        if (response.progress)
+          setProgress({
+            completed: response.progress.nextUnit,
+            total: response.progress.totalUnits || 1,
+          });
         setLoadingLabel(
           response.progress
             ? `Đang đọc tài liệu · ${response.progress.nextUnit}/${response.progress.totalUnits} phần · còn ${response.remainingFiles} tệp...`
@@ -761,6 +775,7 @@ export function useWorkspace() {
       const uploads: SignedUpload[] = created.uploads
         .map((upload, index) => ({ ...upload, file: files[index] }))
         .filter((upload) => Boolean(upload.file));
+      setScreen("processing");
       if (uploads.length) {
         setPendingUploads(uploads);
         setPendingIngestId(created.analysis.id);
@@ -943,6 +958,10 @@ export function useWorkspace() {
   }
 
   async function openHistoryItem(item: HistoryRow) {
+    setActivities([]);
+    setReport(null);
+    setOutline([]);
+    setScreen("processing");
     setBusy(true);
     setError("");
     setAnalysisId(item.id);
@@ -975,44 +994,44 @@ export function useWorkspace() {
           ]),
         ),
       );
-      setReport(details.analysis.validation_report ?? null);
-      if (item.status === "completed")
-        await loadResult(item.id, details.analysis);
-      else if (["draft", "needs_review"].includes(item.status)) {
-        if (
-          details.inputs.some(
-            (input) => input.status === "staged" || input.metadata?.errorCode,
+      if (!details.analysis.confirmed_at) {
+        const checkpoints = details.inputs
+          .map(
+            (input) =>
+              input.metadata?.extractionProgress as
+                { nextUnit?: number; totalUnits?: number } | undefined,
           )
-        ) {
-          setPendingIngestId(item.id);
-          setLoadingLabel("Đang tiếp tục đọc tài liệu đã tải lên...");
-          await ingestAllFiles(item.id);
-          setPendingIngestId(null);
-          await refreshReview(item.id);
-          return;
-        }
-        if (details.analysis.validation_report?.inputs?.length)
-          setOutline(
-            details.analysis.validation_report.inputs.flatMap(
-              (input) => input.structure,
-            ),
-          );
-        setScreen("review");
-      } else if (item.status === "failed") {
-        setScreen("processing");
-        setLoadingLabel(
-          "Phiên đã xác nhận nhưng bị gián đoạn. Bạn có thể thử xử lý lại.",
-        );
-      } else {
-        setScreen("processing");
-        setLoadingLabel(
-          item.status === "processing"
-            ? "Phiên đang xử lý dở. Tiếp tục để hoàn thành các phần còn lại."
-            : item.status === "ready"
-              ? "Phiên đã được xác nhận nhưng chưa bắt đầu xử lý."
-              : statusLabel(item.status),
-        );
+          .filter(Boolean);
+        if (checkpoints.length)
+          setProgress({
+            completed: checkpoints.reduce((n, c) => n + (c?.nextUnit ?? 0), 0),
+            total:
+              checkpoints.reduce((n, c) => n + (c?.totalUnits ?? 0), 0) || 1,
+          });
+        else setProgress(null);
       }
+      setReport(details.analysis.validation_report ?? null);
+      setOutline(
+        (details.analysis.validation_report?.inputs ?? []).flatMap(
+          (input) => input.structure ?? [],
+        ),
+      );
+      const phase = resumeState(details.analysis, details.inputs);
+      if (phase === "result") await loadResult(item.id, details.analysis);
+      else if (phase === "ingest" || phase === "blocked") {
+        setPendingIngestId(ingestBlocked(details.inputs) ? null : item.id);
+        setScreen("processing");
+        setLoadingLabel(
+          ingestBlocked(details.inputs)
+            ? "Tệp cần tách nhỏ hoặc chuyển đổi trước khi đọc lại."
+            : "Đang đọc tài liệu dở. Checkpoint đã lưu; có thể tiếp tục.",
+        );
+        if (details.analysis.error_message)
+          setError(details.analysis.error_message);
+      } else if (phase === "analysis") {
+        setScreen("processing");
+        setLoadingLabel("Tiến độ đã lưu. Tiếp tục các phần chưa hoàn tất.");
+      } else setScreen("review");
     } catch (cause) {
       setError(
         cause instanceof Error
@@ -1023,6 +1042,68 @@ export function useWorkspace() {
       setBusy(false);
     }
   }
+
+  useEffect(() => {
+    if (!authReady || restored.current) return;
+    restored.current = true;
+    const id = new URL(window.location.href).searchParams.get("analysis");
+    if (id && /^[0-9a-f-]{36}$/i.test(id))
+      void openHistoryItem({
+        id,
+        title: "Đang khôi phục phiên",
+        status: "draft",
+      });
+    // Restore once after authentication initializes; opening a session reads live server status.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authReady]);
+  useEffect(() => {
+    if (!restored.current) return;
+    const url = new URL(window.location.href);
+    if (analysisId && screen !== "input" && screen !== "history")
+      url.searchParams.set("analysis", analysisId);
+    else url.searchParams.delete("analysis");
+    window.history.replaceState(null, "", url);
+  }, [analysisId, screen]);
+  useEffect(() => {
+    if (!analysisId || screen === "input" || screen === "history") return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const state = await api<{
+          analysis: Analysis;
+          items: Activity[];
+          chunks: Array<{ status: string }>;
+        }>(`/api/analyses/${analysisId}/activity`);
+        if (cancelled || !state.analysis) return;
+        setActivities(state.items ?? []);
+        setAnalysis(state.analysis);
+        if (screen === "processing" && state.analysis.confirmed_at)
+          setProgress({
+            completed: state.chunks.filter((c) => c.status === "complete")
+              .length,
+            total: state.chunks.length || 1,
+          });
+        if (
+          screen === "processing" &&
+          !busy &&
+          state.analysis.status === "completed"
+        ) {
+          await loadResult(analysisId, state.analysis);
+          return;
+        }
+      } catch {
+        /* Keep the last known checkpoint; a transient polling failure never crashes the page. */
+      }
+      if (!cancelled) timer = setTimeout(() => void poll(), 2500);
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [analysisId, screen, busy]);
 
   async function submitQuiz(
     answers: Record<string, number>,
@@ -1279,6 +1360,7 @@ export function useWorkspace() {
     setAnalysisId,
     analysis,
     setAnalysis,
+    activities,
     topics,
     setTopics,
     files,
