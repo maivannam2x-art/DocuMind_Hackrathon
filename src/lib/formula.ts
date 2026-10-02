@@ -1,4 +1,4 @@
-import sharp from "sharp";
+import { svgToPng } from "@/lib/svg-raster";
 import { mathjax } from "mathjax-full/js/mathjax.js";
 import { TeX } from "mathjax-full/js/input/tex.js";
 import { SVG } from "mathjax-full/js/output/svg.js";
@@ -38,6 +38,5 @@ async function render(source: string) {
     .replace(/width="[^"]+"/, `width="${width}"`)
     .replace(/height="[^"]+"/, `height="${height}"`)
     .replaceAll("currentColor", "#202235");
-  const bytes = await sharp(Buffer.from(svg)).png().toBuffer();
-  return { bytes, width, height };
+  return svgToPng(svg, width);
 }

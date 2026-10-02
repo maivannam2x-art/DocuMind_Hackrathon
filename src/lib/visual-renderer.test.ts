@@ -53,6 +53,11 @@ describe("canonical stored report images", () => {
     await mkdir("tmp/canonical-images", { recursive: true });
     await Promise.all([writeFile("tmp/canonical-images/report.pdf", pdf),writeFile("tmp/canonical-images/report.docx", docx),writeFile("tmp/canonical-images/report.html", html),writeFile("tmp/canonical-images/diagram.png", d.bytes),writeFile("tmp/canonical-images/formula.png", f.bytes)]);
   });
+  it("rasterizes Vietnamese labels in formulas with the bundled font", async () => {
+    const image = await renderVisual("latex", "t=\\frac{\\text{Thời gian xử lý}}{n}");
+    expect(image.height).toBeGreaterThan(20);
+    await writeFile("tmp/canonical-images/vietnamese-formula.png", image.bytes);
+  });
   it("rejects unsafe and unsupported diagrams rather than creating a broken successful export", async () => {
     expect(() => svgToPng('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><image href="https://example.com/leak"/></svg>')).toThrow();
     expect(() => svgToPng('<svg viewBox="0 0 1 999999999"><path/></svg>')).toThrow();

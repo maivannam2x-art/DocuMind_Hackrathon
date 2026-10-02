@@ -48,3 +48,7 @@ Log LLM mặc định chỉ lưu hash và số ký tự; token/thời gian vẫn
 Chạy tiếp `07_resumable_activity.sql`, rồi `08_expanded_it_catalog.sql` sau 01–06. File 07 thêm lease đọc đầu vào và nhật ký AI/hệ thống theo phiên, đồng thời đổi các draft lỗi giới hạn thành failed (không xóa tài liệu). File 08 thêm 24 chuyên ngành và prompt tương ứng; tổng hiện tại 73 chuyên ngành active. Có thể chạy lại các file này.
 
 `analysis_activity` là bảng backend-only: RLS bật và anon/authenticated không có quyền; API `/activity` kiểm tra chủ sở hữu. Nhật ký lưu nhãn tác vụ/model/trạng thái, không lưu nội dung suy nghĩ hoặc sao chép tài liệu. FK cascade dọn nhật ký khi phiên được dọn theo TTL.
+
+## Bổ sung ảnh và gói Markdown ngày 02/10/2026
+
+PNG công thức/sơ đồ lưu ở `analysis-assets`; bảng `generated_assets` chỉ giữ nguồn, metadata và đường dẫn. Không ghi ảnh base64 vào database. Khi nâng cấp project đang chạy, áp dụng `supabase/migrations/20261002170651_allow_portable_markdown_exports.sql` để bucket `analysis-exports` nhận ZIP Markdown kèm ảnh. Bản bootstrap cài mới đã bổ sung cập nhật này. Audit chỉ đọc nằm ở `database/05_visual_assets_audit.sql`; chi tiết luồng và kiểm thử ở `docs/VISUAL_EXPORT_AUDIT_2026-10-02.md`.

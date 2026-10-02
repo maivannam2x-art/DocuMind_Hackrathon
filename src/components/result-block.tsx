@@ -44,7 +44,7 @@ function StoredVisual({ source, assetType, analysisId, resultId, initialUrl, exp
   return <details className="diagram-view" open={opened} onToggle={event => setOpened(event.currentTarget.open)}>
     <summary>{label} · mở để xem ảnh</summary>
     {opened && <>
-      {url && <div className="diagram-render"><img src={url} alt={assetType === "latex" ? "Công thức toán" : "Sơ đồ từ tài liệu"} style={{ maxWidth: "100%", height: "auto", maxHeight: assetType === "latex" ? 100 : undefined }} onError={() => { setUrl(""); setError("Đường dẫn ảnh đã hết hạn. Bấm thử lại để lấy ảnh đã lưu."); }} /></div>}
+      {url && <div className="diagram-render"><img src={url} alt={assetType === "latex" ? "Công thức toán" : "Sơ đồ từ tài liệu"} style={{ maxWidth: "100%", height: "auto", maxHeight: assetType === "latex" ? 100 : 700, objectFit: "contain" }} onError={() => { setUrl(""); setError("Đường dẫn ảnh đã hết hạn. Bấm thử lại để lấy ảnh đã lưu."); }} /></div>}
       {!url && !error && <p>Hệ thống đang dựng ảnh và lưu Supabase Storage...</p>}
       {error && <p className="diagram-error">{error} <button type="button" onClick={() => { setError(""); setAttempt(value => value + 1); }}>Thử lại</button></p>}
       <details><summary>Xem mã {assetType === "latex" ? "LaTeX" : assetType === "plantuml" ? "PlantUML" : "Mermaid"}</summary><pre>{source}</pre></details>

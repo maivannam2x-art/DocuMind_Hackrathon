@@ -14,7 +14,7 @@ export async function ensureVisualAsset(analysisId: string, resultId: string, bl
   const { data: previous, error } = await db.from("generated_assets").select("id,storage_bucket,storage_path,metadata").eq("analysis_id", analysisId).eq("result_id", resultId).eq("asset_type", kind).eq("source", source).order("created_at", { ascending: false }).limit(1).maybeSingle();
   if (error) throw new ApiError(503, "ASSET_METADATA_UNAVAILABLE", "Chưa đọc được thông tin ảnh đã lưu.");
   // Old SVG records are upgraded lazily; no re-analysis or LLM call is needed.
-  if (previous?.storage_bucket === "analysis-assets" && previous.storage_path?.endsWith(".png")) {
+  if (previous?.storage_bucket === "analysis-assets" && previous.storage_path?.endsWith(".png") && (kind !== "latex" || previous.metadata?.renderer === "mathjax-resvg")) {
     const { data } = await db.storage.from("analysis-assets").download(previous.storage_path);
     if (data) {
       const bytes = Buffer.from(await data.arrayBuffer());
@@ -38,7 +38,7 @@ export async function ensureVisualAsset(analysisId: string, resultId: string, bl
   const storagePath = `${analysisId}/${resultId}/${sourceHash}.png`;
   const { error: uploadError } = await db.storage.from("analysis-assets").upload(storagePath, image.bytes, { contentType: "image/png", cacheControl: "3600", upsert: true });
   if (uploadError) throw new ApiError(503, "ASSET_STORAGE_UNAVAILABLE", "Chưa lưu được ảnh trên Supabase. Hãy thử lại trước khi xuất báo cáo.");
-  const asset = { analysis_id: analysisId, result_id: resultId, asset_type: kind, source, title: block.type, storage_bucket: "analysis-assets", storage_path: storagePath, metadata: { renderer: kind === "latex" ? "mathjax" : "mermaid-resvg", mimeType: "image/png", sourceHash, width: image.width, height: image.height } };
+  const asset = { analysis_id: analysisId, result_id: resultId, asset_type: kind, source, title: block.type, storage_bucket: "analysis-assets", storage_path: storagePath, metadata: { renderer: kind === "latex" ? "mathjax-resvg" : "mermaid-resvg", mimeType: "image/png", sourceHash, width: image.width, height: image.height } };
   const { error: saveError } = previous ? await db.from("generated_assets").update(asset).eq("id", previous.id) : await db.from("generated_assets").insert(asset);
   if (saveError) throw new ApiError(503, "ASSET_METADATA_UNAVAILABLE", "Ảnh đã tải lên nhưng chưa lưu được đường dẫn. Hãy thử lại.");
   return { ...asset, image };

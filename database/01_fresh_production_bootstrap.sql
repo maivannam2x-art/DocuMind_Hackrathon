@@ -885,4 +885,11 @@ create index if not exists quiz_questions_source_chunk_fk_idx on public.quiz_que
 create index if not exists quizzes_result_fk_idx on public.quizzes(result_id);
 create index if not exists topic_specializations_parent_fk_idx on public.topic_specializations(parent_id);
 
+-- Portable Markdown exports include report.md and canonical PNG images in a ZIP.
+-- Preserve bucket privacy and existing allowed MIME types.
+update storage.buckets
+set allowed_mime_types = case when allowed_mime_types is null then null
+  else array(select distinct mime from unnest(allowed_mime_types || array['application/zip']::text[]) as mime) end
+where id = 'analysis-exports';
+
 commit;

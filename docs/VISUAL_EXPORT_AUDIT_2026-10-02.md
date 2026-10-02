@@ -7,7 +7,7 @@ Tại thời điểm kiểm tra có 560 bản ghi LaTeX, không có đường d�
 ## Luồng mới
 
 1. Kết quả AI có block được đánh dấu `latex`, `mermaid`, `plantuml`; giữ mã nguồn để kiểm tra/chỉnh sửa.
-2. Backend dựng Mermaid thành SVG rồi rasterize bằng resvg, với font tiếng Việt đóng gói cùng ứng dụng. Công thức dùng MathJax/Sharp để tạo PNG.
+2. Backend dựng Mermaid thành SVG rồi rasterize bằng resvg, với font tiếng Việt đóng gói cùng ứng dụng. Công thức dùng MathJax/resvg để tạo PNG.
 3. Upload PNG nhị phân vào bucket riêng tư `analysis-assets`. `generated_assets` chỉ lưu nguồn, đường dẫn, SHA-256, MIME, kích thước; không lưu base64 hay buffer.
 4. Trong xử lý phân tích mới, dựng/lưu tối đa ba ảnh đồng thời. Nhật ký đánh dấu đây là tác vụ hệ thống nội bộ, không phải gửi AI.
 5. Giao diện lấy URL có chữ ký để hiển thị PNG; đường dẫn hết hạn có nút thử lại. Kết quả cũ được dựng/lưu bổ sung khi mở ảnh hoặc xuất, không cần phân tích AI lại.
@@ -30,7 +30,7 @@ Bucket giữ nguyên chính sách riêng tư, API kiểm tra chủ sở hữu v�
 - Kiểm tra Word ZIP có PNG giống chính ảnh đầu vào, PDF chứa đối tượng ảnh; mở PDF rasterized để kiểm tra chữ, mũi tên, công thức.
 - Kiểm thử Storage: upload buffer, metadata không chứa base64; tái sử dụng PNG đã lưu; Storage lỗi không trả thành công; công thức lặp chỉ dựng một lần.
 - Kiểm tra UI desktop/mobile trong CI: ảnh sơ đồ/công thức thay cho SVG/KaTeX trong kết quả; bảo toàn flow input → review → processing → result, quiz và chatbot.
-- SQL kiểm tra nằm ở `database/05_visual_assets_audit.sql`; thay đổi này không cần thay schema/bucket.
+- SQL kiểm tra nằm ở `database/05_visual_assets_audit.sql`; không cần thêm bảng/cột. Migration `20261002170651_allow_portable_markdown_exports.sql` bổ sung MIME `application/zip` cho bucket báo cáo, giữ nguyên quyền riêng tư. Bản thử production phát hiện thiếu MIME này và đã được sửa trước khi chốt.
 
 ## Giới hạn được báo rõ
 

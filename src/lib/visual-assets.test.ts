@@ -25,7 +25,7 @@ describe("Supabase image persistence", () => {
   });
   it("reuses stored PNG without another upload or replacing the metadata", async () => {
     const image = await renderVisual("latex", "x=1");
-    mock.previous = { id: "asset", storage_bucket: "analysis-assets", storage_path: "analysis/result/image.png", metadata: {} };
+    mock.previous = { id: "asset", storage_bucket: "analysis-assets", storage_path: "analysis/result/image.png", metadata: { renderer: "mathjax-resvg" } };
     mock.stored = new Blob([new Uint8Array(image.bytes)]);
     const asset = await ensureVisualAsset("analysis", "result", block);
     expect(asset.image.bytes.equals(image.bytes)).toBe(true);

@@ -1,5 +1,5 @@
-import path from "node:path";
-import { Resvg } from "@resvg/resvg-js";
+import { svgToPng } from "@/lib/svg-raster";
+export { svgToPng, validateVisualSvg } from "@/lib/svg-raster";
 import { renderMermaidSVG } from "beautiful-mermaid";
 import { renderFormulaPng } from "@/lib/formula";
 import type { ResultBlock } from "@/lib/result-content";
@@ -14,28 +14,6 @@ export function visualKind(block: ResultBlock): "latex" | "mermaid" | "plantuml"
 export function visualSource(block: ResultBlock) {
   const value = visualKind(block) === "latex" && typeof block.metadata?.latex === "string" ? block.metadata.latex : block.content;
   return typeof value === "string" ? value.trim().replace(/^```(?:mermaid|latex|tex|plantuml)?\s*|```$/g, "").trim() : "";
-}
-export function validateVisualSvg(svg: string) {
-  const value = svg.trim();
-  if (value.length > 2_000_000 || !value.startsWith("<svg") || !value.includes("</svg>") ||
-    /<!DOCTYPE|<!ENTITY|<\s*(script|foreignObject|iframe|object|embed|image)\b|\bon[a-z]+\s*=|javascript:|data:|@import|url\(\s*["']?\s*(?!#)[^\s)]|(?:href|src)\s*=\s*["']\s*(?!#)/i.test(value)) {
-    throw new Error("Ảnh SVG không hợp lệ hoặc chứa tài nguyên bên ngoài.");
-  }
-  return value;
-}
-export function svgToPng(svg: string): VisualImage {
-  const safe = validateVisualSvg(svg);
-  const box = safe.match(/viewBox=["']([\d.e+\s-]+)["']/i)?.[1].trim().split(/\s+/).map(Number);
-  if (box && (box.length !== 4 || !box.every(Number.isFinite) || box[2] <= 0 || box[3] <= 0 || 1800 * box[3] / box[2] > 10000)) throw new Error("Kích thước sơ đồ không hợp lệ hoặc quá cao.");
-  const rendered = new Resvg(safe, {
-    background: "#ffffff",
-    fitTo: { mode: "width", value: 1800 },
-    font: { fontFiles: [path.join(process.cwd(), "public/fonts/DocuMindSans.ttf")], loadSystemFonts: false, defaultFontFamily: "DejaVu Sans" },
-  }).render();
-  if (rendered.height > 10000) throw new Error("Sơ đồ quá cao để xuất ảnh rõ ràng. Hãy chia thành các sơ đồ nhỏ.");
-  const bytes = Buffer.from(rendered.asPng());
-  if (bytes.length > 4_000_000) throw new Error("Ảnh sơ đồ vượt kích thước xuất cho phép.");
-  return { bytes, width: rendered.width, height: rendered.height };
 }
 export async function renderVisual(kind: "latex" | "mermaid" | "plantuml", source: string, suppliedSvg?: string): Promise<VisualImage> {
   if (!source || source.length > 10000) throw new Error("Mã công thức hoặc sơ đồ trống hoặc quá dài.");

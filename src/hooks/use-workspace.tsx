@@ -1285,7 +1285,7 @@ export function useWorkspace() {
         url = URL.createObjectURL(blob),
         link = document.createElement("a");
       link.href = url;
-      link.download = `documind-report.${format === "markdown" ? "md" : format}`;
+      link.download = `documind-report.${format === "markdown" ? "zip" : format}`;
       document.body.appendChild(link);
       link.click();
       link.remove();
