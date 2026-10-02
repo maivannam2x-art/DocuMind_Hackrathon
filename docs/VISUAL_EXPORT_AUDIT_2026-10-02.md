@@ -46,3 +46,9 @@ Không coi các kiểm thử trên là chứng minh mọi sơ đồ bất kỳ h
 - Phân tích mới chạy input → validate → confirm → run → result: hoàn tất với Mermaid và LaTeX có PNG Storage ngay khi nhận kết quả, trước khi mở ảnh ở frontend. Nhật ký có tác vụ hệ thống dựng/lưu ảnh.
 - 130 unit test qua ở bản font cuối. CI trước đó chạy đủ 16 E2E desktop/mobile; kiểm tra download được nâng cấp để xác nhận tên ZIP, nội dung Markdown và thư mục PNG thay vì chỉ nhận sự kiện tải xuống.
 - Trình điều khiển browser bị timeout khi đợi sự kiện download Word. Database xác nhận thao tác giao diện đã tạo tệp Word trạng thái ready; file nhị phân được tải/kiểm tra riêng qua API. Không coi việc chưa bắt được đường dẫn download trong công cụ là bằng chứng đã kiểm tra Microsoft Word trực tiếp.
+
+### Xác minh cuối
+
+CI `37039884853` tại commit `f5dd170` đã qua: lint, 130 unit test, build, 16 E2E desktop/mobile. Kết quả byte/pixel đối chiếu: 4 PNG trong Word giống từng byte với 4 PNG nhúng trong HTML; 4 ảnh RGB trích xuất từ PDF giống pixel với ảnh HTML. Bộ dựng công thức mới đã được kiểm tra với nhãn tiếng Việt “Thời gian xử lý”. Gemini nhận diện chủ đề, tạo section và tổng quan cho phiên thử mới đều có exchange `succeeded`; ảnh được dựng/lưu bằng code sau đó.
+
+Bằng chứng tổng hợp không chứa cookie, key, nội dung tài liệu hoặc URL có chữ ký nằm ở `docs/qa/visual-export-verification-2026-10-02.json`. Ảnh giao diện nằm ở `docs/screenshots/visual-png-report-2026-10-02.jpg`.

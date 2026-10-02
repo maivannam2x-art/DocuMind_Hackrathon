@@ -1,0 +1,95 @@
+{
+  "date": "2026-10-02",
+  "functional_commit": "7aa4fb1ba525c44cf0b86de7ae9445d2bfefba04",
+  "exports": [
+    {
+      "format": "pdf",
+      "status": 200,
+      "downloadStatus": 200,
+      "bytes": 118240,
+      "ms": 27671,
+      "imageObjects": 8
+    },
+    {
+      "format": "docx",
+      "status": 200,
+      "downloadStatus": 200,
+      "bytes": 83100,
+      "ms": 27652,
+      "media": 4
+    },
+    {
+      "format": "html",
+      "status": 200,
+      "downloadStatus": 200,
+      "bytes": 178874,
+      "ms": 26745,
+      "images": 4
+    },
+    {
+      "format": "markdown",
+      "status": 200,
+      "downloadStatus": 200,
+      "bytes": 72259,
+      "ms": 29272,
+      "media": 4
+    },
+    {
+      "format": "json",
+      "status": 200,
+      "downloadStatus": 200,
+      "bytes": 25346,
+      "ms": 29820,
+      "visuals": 4
+    }
+  ],
+  "image_comparison": {
+    "html_pngs": 4,
+    "word_pngs": 4,
+    "word_matches_html_byte_for_byte": true,
+    "pdf_matches_html_pixels": true
+  },
+  "new_analysis_requests": [
+    {
+      "step": "analyses",
+      "status": 201,
+      "ms": 14282
+    },
+    {
+      "step": "validate",
+      "status": 200,
+      "ms": 11814
+    },
+    {
+      "step": "confirm",
+      "status": 200,
+      "ms": 10247
+    },
+    {
+      "step": "run",
+      "status": 200,
+      "ms": 53501
+    },
+    {
+      "step": "result",
+      "status": 200,
+      "ms": 1548
+    },
+    {
+      "step": "activity",
+      "status": 200,
+      "ms": 671
+    }
+  ],
+  "new_analysis_stored_types": [
+    "mermaid",
+    "latex"
+  ],
+  "rendering_activity_succeeded": true,
+  "database_image_metadata_contains_base64": false,
+  "unit_tests_passed": 130,
+  "limitations": [
+    "PlantUML requires conversion to Mermaid; export is blocked rather than dropping the image.",
+    "Browser automation timed out awaiting Word download; API download and binary file contents were verified."
+  ]
+}
