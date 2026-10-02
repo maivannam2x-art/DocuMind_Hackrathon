@@ -14,11 +14,13 @@ export function ResultTabs({
   onSelect,
   quizEnabled,
   quizCount,
+  variant = "sidebar",
 }: {
   active: string;
   onSelect: (id: string) => void;
   quizEnabled: boolean;
   quizCount: number;
+  variant?: "sidebar" | "mobile";
 }) {
   const visible = tabs.filter(([id]) => id !== "quiz" || quizEnabled);
   function move(event: KeyboardEvent<HTMLDivElement>) {
@@ -39,21 +41,23 @@ export function ResultTabs({
   }
   return (
     <div
-      className="nav-submenu"
+      className={variant === "mobile" ? "result-tabs" : "nav-submenu"}
       role="tablist"
       aria-label="Nội dung kết quả"
-      aria-orientation="vertical"
+      aria-orientation={variant === "mobile" ? "horizontal" : "vertical"}
       onKeyDown={move}
     >
       {visible.map(([id, label]) => (
         <button
           key={id}
-          id={`result-tab-${id}`}
+          id={`${variant === "mobile" ? "mobile-" : ""}result-tab-${id}`}
           role="tab"
           aria-selected={active === id}
           aria-controls="result-content"
           tabIndex={active === id ? 0 : -1}
-          className={active === id ? "selected" : ""}
+          className={
+            active === id ? (variant === "mobile" ? "active" : "selected") : ""
+          }
           onClick={() => onSelect(id)}
         >
           {label}

@@ -244,34 +244,13 @@ export default function Home() {
           )}
 
           {screen === "result" && (
-            <nav className="result-tabs" aria-label="Các trang kết quả">
-              {[
-                { id: "overview", label: "Tổng quan" },
-                { id: "summary", label: "Tóm tắt" },
-                { id: "detail", label: "Chi tiết" },
-                { id: "conclusion", label: "Kết luận" },
-                ...(analysis?.quiz_enabled
-                  ? [
-                      {
-                        id: "quiz",
-                        label: `Quiz${quizQuestions.length ? ` (${quizQuestions.length})` : ""}`,
-                      },
-                    ]
-                  : []),
-                { id: "chat", label: "Hỏi đáp AI" },
-                { id: "report", label: "Xuất báo cáo" },
-              ].map((tab) => (
-                <button
-                  type="button"
-                  key={tab.id}
-                  className={activeResultTab === tab.id ? "active" : ""}
-                  aria-current={activeResultTab === tab.id ? "page" : undefined}
-                  onClick={() => setActiveResultTab(tab.id)}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </nav>
+            <ResultTabs
+              variant="mobile"
+              active={activeResultTab}
+              onSelect={setActiveResultTab}
+              quizEnabled={Boolean(analysis?.quiz_enabled)}
+              quizCount={quizQuestions.length}
+            />
           )}
 
           {error && (

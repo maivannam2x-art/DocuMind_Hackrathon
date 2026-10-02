@@ -246,7 +246,7 @@ test("input → review → confirm → result, typed visuals, quiz, chat and exp
   await page.getByRole("button", { name: /Nộp bài/ }).click();
   await expect(page.getByText(/1\/1 câu đúng/).first()).toBeVisible();
   await page.getByRole("button", { name: "Lịch sử làm quiz" }).click();
-  await expect(page.locator(".quiz-attempts")).toContainText("1/1");
+  await expect(page.locator(".quiz-attempt-history")).toContainText("1 câu");
   await page.getByRole("tab", { name: "Hỏi đáp AI" }).click();
   await page
     .getByRole("textbox", { name: "Câu hỏi cho AI" })
@@ -276,13 +276,13 @@ test("rejects unsupported or empty file selections visibly", async ({
     mimeType: "application/octet-stream",
     buffer: Buffer.from("bad"),
   });
-  await expect(page.getByRole("alert")).toContainText("chưa được hỗ trợ");
+  await expect(page.locator(".alert-error")).toContainText("chưa được hỗ trợ");
   await page.locator("input[type=file]").setInputFiles({
     name: "empty.txt",
     mimeType: "text/plain",
     buffer: Buffer.alloc(0),
   });
-  await expect(page.getByRole("alert")).toContainText("không có dữ liệu");
+  await expect(page.locator(".alert-error")).toContainText("không có dữ liệu");
 });
 test("result tabs support keyboard navigation and mobile has no overflow", async ({
   page,
