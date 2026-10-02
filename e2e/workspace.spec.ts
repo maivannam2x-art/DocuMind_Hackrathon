@@ -1,3 +1,5 @@
+import JSZip from "jszip";
+import { readFile } from "node:fs/promises";
 import { expect, test, type Page } from "@playwright/test";
 const id = "11111111-1111-4111-8111-111111111111";
 const source =
@@ -210,7 +212,7 @@ async function fixture(page: Page, pauseCompletes = false) {
         latencyMs: 1000,
       };
     else if (path.endsWith("/exports"))
-      data = { downloadUrl: "http://127.0.0.1:3000/fixture/report.md" };
+      data = { downloadUrl: "http://127.0.0.1:3000/fixture/report.zip" };
     else
       data = {
         analysis: {
@@ -239,12 +241,12 @@ async function fixture(page: Page, pauseCompletes = false) {
         if (!pauseCompletes) throw error;
       });
   });
-  await page.route("**/fixture/report.md", (route) =>
-    route.fulfill({
-      body: "# IT test\nAPI and SQL",
-      contentType: "text/markdown",
-    }),
-  );
+  const archive = new JSZip();
+  archive.file("report.md", "# IT test\n![Sơ đồ](images/diagram.png)");
+  archive.file("images/diagram.png", Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jR1sAAAAASUVORK5CYII=", "base64"));
+  const zipBytes = await archive.generateAsync({ type: "nodebuffer" });
+  await page.route("**/fixture/report.zip", route => route.fulfill({ body: zipBytes, contentType: "application/zip" }));
+
   return events;
 }
 async function complete(page: Page) {
@@ -302,7 +304,13 @@ test("input → review → confirm → result, typed visuals, quiz, chat and exp
     .filter({ hasText: "Markdown" })
     .getByRole("button")
     .click();
-  expect((await download).suggestedFilename()).toMatch(/\.md$/);
+  const downloaded = await download;
+  expect(downloaded.suggestedFilename()).toMatch(/\.zip$/);
+  const downloadedPath = await downloaded.path();
+  expect(downloadedPath).not.toBeNull();
+  const archive = await JSZip.loadAsync(await readFile(downloadedPath!));
+  expect(await archive.file("report.md")!.async("string")).toContain("](images/diagram.png)");
+  expect(archive.file("images/diagram.png")).not.toBeNull();
   await expect(page.locator("body")).not.toContainText("[object Object]");
 });
 test("rejects unsupported or empty file selections visibly", async ({

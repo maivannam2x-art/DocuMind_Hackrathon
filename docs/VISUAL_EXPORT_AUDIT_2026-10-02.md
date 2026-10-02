@@ -37,3 +37,12 @@ Bucket giữ nguyên chính sách riêng tư, API kiểm tra chủ sở hữu v�
 Backend hỗ trợ trực tiếp các dạng Mermaid được bộ dựng hỗ trợ. Các dạng khác dùng bộ Mermaid trong trình duyệt rồi upload SVG an toàn để backend chuyển PNG; cần cú pháp hợp lệ. PlantUML chưa có bộ dựng ảnh tại server: báo lỗi rõ và chặn xuất thiếu ảnh, yêu cầu chuyển sang Mermaid. JSON là dữ liệu tích hợp; URL xem hết hạn sau một giờ, đường dẫn Storage và mã nguồn còn nguyên để xin URL mới. Kết quả cũ không được sửa hàng loạt trong phiên này.
 
 Không coi các kiểm thử trên là chứng minh mọi sơ đồ bất kỳ hoặc mọi phần mềm mở file đều được hỗ trợ. Cần giữ cơ chế báo lỗi thay vì bỏ qua hình.
+
+## Kết quả trên production
+
+- Commit chức năng chính `f1c0457`, cập nhật font/ZIP `7aa4fb1`; cả hai đã được Vercel triển khai thành công.
+- Với tài liệu IT thử dài khoảng 20.909 ký tự: PDF tải được và có 4 ảnh nội dung (8 đối tượng PDF khi tính cả alpha mask); DOCX có 4 PNG trong `word/media`; HTML có 4 PNG nhúng; ZIP Markdown có 4 ảnh; JSON có 4 block hình với đường dẫn Storage, không chứa byte ảnh. Tải lại ảnh qua signed URL trả PNG hợp lệ.
+- Kiểm tra SQL: metadata `generated_assets` không chứa base64; đường dẫn PNG và kích thước đã được ghi.
+- Phân tích mới chạy input → validate → confirm → run → result: hoàn tất với Mermaid và LaTeX có PNG Storage ngay khi nhận kết quả, trước khi mở ảnh ở frontend. Nhật ký có tác vụ hệ thống dựng/lưu ảnh.
+- 130 unit test qua ở bản font cuối. CI trước đó chạy đủ 16 E2E desktop/mobile; kiểm tra download được nâng cấp để xác nhận tên ZIP, nội dung Markdown và thư mục PNG thay vì chỉ nhận sự kiện tải xuống.
+- Trình điều khiển browser bị timeout khi đợi sự kiện download Word. Database xác nhận thao tác giao diện đã tạo tệp Word trạng thái ready; file nhị phân được tải/kiểm tra riêng qua API. Không coi việc chưa bắt được đường dẫn download trong công cụ là bằng chứng đã kiểm tra Microsoft Word trực tiếp.
