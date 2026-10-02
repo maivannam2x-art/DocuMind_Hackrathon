@@ -62,13 +62,13 @@ export async function PATCH(request: NextRequest, context: Context) {
     let chunksSaved = false;
     if (body.inputs?.length) {
       const inputIds = body.inputs.map(input => input.id);
-      const { data: ownedInputs, error } = await db.from("analysis_inputs").select("id").eq("analysis_id", id).in("id", inputIds);
+      const { data: ownedInputs, error } = await db.from("analysis_inputs").select("id,original_name").eq("analysis_id", id).in("id", inputIds);
       if (error || ownedInputs?.length !== body.inputs.length) throw new ApiError(400, "INPUT_OWNERSHIP_MISMATCH", "Có đầu vào không thuộc phân tích này.");
       const replacements = new Map<string, string>();
       for (const input of body.inputs) {
         const value = normalizeText(input.editedText);
         replacements.set(input.id, value);
-        if (value.length < 40 && !sourceContentBlocks(value).some(block=>["latex","mermaid","plantuml"].includes(block.contentType??""))) throw new ApiError(422, "INPUT_TOO_SHORT", "Mỗi nội dung sau chỉnh sửa cần ít nhất 40 ký tự.");
+        if (value.length < 40 && !sourceContentBlocks(value).some(block=>["latex","mermaid","plantuml"].includes(block.contentType??""))) throw new ApiError(422, "INPUT_TOO_SHORT", `${ownedInputs?.find(row => row.id === input.id)?.original_name || "Đầu vào"}: nội dung sau chỉnh sửa cần ít nhất 40 ký tự hoặc sơ đồ/công thức có mã.`, { inputId: input.id });
       }
       for (const input of body.inputs) await db.from("analysis_inputs").update({ edited_text: replacements.get(input.id), status: "valid" }).eq("id", input.id);
       const { data: allInputs } = await db.from("analysis_inputs").select("id,edited_text,normalized_text,original_text").eq("analysis_id", id).order("position");

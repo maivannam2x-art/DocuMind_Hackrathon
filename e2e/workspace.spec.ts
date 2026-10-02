@@ -634,7 +634,8 @@ test("long Markdown, code and tables stay inside result cards and the mobile vie
   await page.getByRole("button", { name: /Mở tất cả/ }).click();
   await expect(page.locator(".rich-text").first()).toContainText(long);
   const size = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, width: innerWidth }));
-  expect(size.scroll).toBeLessThanOrEqual(size.width + 1);
+  const overflow = await page.evaluate(() => Array.from(document.querySelectorAll(".detail-sections, .detail-section, .detail-body, .content-block, .code-view, .table-scroll, .rich-text")).map(element => ({ className: element.className, width: element.getBoundingClientRect().width, right: element.getBoundingClientRect().right, scroll: element.scrollWidth })).filter(element => element.right > innerWidth + 1));
+  expect(size.scroll, JSON.stringify(overflow)).toBeLessThanOrEqual(size.width + 1);
   for (const card of await page.locator(".content-block").all()) {
     const bounds = await card.boundingBox();
     expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(size.width + 1);

@@ -766,6 +766,7 @@ export function useWorkspace() {
       );
       const created = await api<{
         analysis: Analysis;
+        inputs?: ApiInput[];
         uploads: Array<Omit<SignedUpload, "file">>;
       }>("/api/analyses", {
         method: "POST",
@@ -787,6 +788,8 @@ export function useWorkspace() {
       });
       setAnalysisId(created.analysis.id);
       setAnalysis(created.analysis);
+      setInputRows(created.inputs ?? []);
+      setActivities([]);
       if (!created.analysis.user_id) rememberGuestAnalysis(created.analysis.id);
       const uploads: SignedUpload[] = created.uploads
         .map((upload, index) => ({ ...upload, file: files[index] }))
@@ -885,7 +888,7 @@ export function useWorkspace() {
         if (!checked.report.valid)
           throw new Error(
             checked.report.blockingErrors
-              .map((item) => item.message)
+              .map((item) => `${item.location ? `${item.location}: ` : ""}${item.message}`)
               .join(" ") || "Nội dung chưa hợp lệ để xử lý.",
           );
         await api(`/api/analyses/${analysisId}/confirm`, { method: "POST" });
@@ -979,6 +982,8 @@ export function useWorkspace() {
     setPendingUploads([]);
     setReport(null);
     setOutline([]);
+    setInputRows([]);
+    setActivities([]);
     setScreen("processing");
     setBusy(true);
     setError("");

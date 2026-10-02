@@ -767,3 +767,8 @@
 }
 .validation-message, .validation-message > span { min-width: 0; overflow-wrap: anywhere; }
 .code-view { max-width: 100%; min-width: 0; overflow-x: auto; white-space: pre; }
+/* A grid item's automatic minimum otherwise expands to a pre/table's intrinsic width. */
+.detail-sections { min-width: 0; max-width: 100%; grid-template-columns: minmax(0, 1fr); }
+.detail-section, .detail-toolbar, .detail-body { min-width: 0; max-width: 100%; }
+.detail-title > div, .detail-toolbar-row > span { min-width: 0; overflow-wrap: anywhere; }
+.source-reading-view { grid-template-columns: minmax(0, 1fr); }
