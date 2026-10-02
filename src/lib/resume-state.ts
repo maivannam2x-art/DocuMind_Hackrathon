@@ -7,6 +7,9 @@ export function resumeState(
   if (analysis.confirmed_at) return "analysis";
   if (inputs.some((i) => ["staged", "error"].includes(i.status ?? "")))
     return ingestBlocked(inputs) ? "blocked" : "ingest";
+  // Extraction can finish after F5 while the browser never sends /validate.
+  // Finish that checkpoint before presenting review, without re-reading extracted files.
+  if (analysis.status === "draft" && inputs.length) return "ingest";
   return "review";
 }
 export function outlineFromReport(

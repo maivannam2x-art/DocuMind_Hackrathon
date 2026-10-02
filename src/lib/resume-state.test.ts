@@ -21,4 +21,12 @@ describe("resume extraction and analysis independently", () => {
     );
     expect(resumeState({ status: "completed" }, [])).toBe("result");
   });
+  it("finishes validation when extraction completed after the browser closed", () => {
+    expect(resumeState({ status: "draft" }, [{ status: "extracted" }])).toBe(
+      "ingest",
+    );
+    expect(
+      resumeState({ status: "needs_review" }, [{ status: "extracted" }]),
+    ).toBe("review");
+  });
 });

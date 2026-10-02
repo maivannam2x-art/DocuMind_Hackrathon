@@ -82,7 +82,21 @@ async function fixture(page: Page, pauseCompletes = false) {
       method = request.method();
     events.push(method + " " + path);
     let data: unknown = {};
-    if (path === "/api/topics") data = { data: [] };
+    if (path === "/api/topics")
+      data = [
+        {
+          id: "it-topic",
+          code: "IT",
+          name: "Công nghệ thông tin",
+          specializations: [
+            {
+              id: "spring-specialization",
+              name: "Spring Boot và Spring Security",
+              description: "Spring Boot, JWT và phân quyền.",
+            },
+          ],
+        },
+      ];
     else if (path === "/api/analyses" && method === "POST") {
       quizSettings = request.postDataJSON().quizSettings;
       data = {
@@ -503,9 +517,79 @@ test("searches predefined choices and falls back to automatic specialization", a
     name: "Chuyên ngành IT",
     exact: true,
   });
+  await specialization.fill("Spring");
+  await page
+    .getByRole("option", {
+      name: "Spring Boot và Spring Security",
+      exact: false,
+    })
+    .click();
+  await expect(specialization).toHaveValue("Spring Boot và Spring Security");
   await specialization.fill("Unknown subject");
   await page
     .getByRole("button", { name: "Tự nhận diện chuyên ngành", exact: true })
     .click();
   await expect(specialization).toHaveValue("Tự nhận diện chuyên ngành");
+});
+
+test("restores extraction completed after F5 and validates before showing review", async ({
+  page,
+}) => {
+  const events = await fixture(page);
+  let validated = false;
+  const analysis = {
+    id,
+    title: "Đã đọc xong nhưng chưa kiểm tra",
+    status: "draft",
+    confirmed_at: null,
+    validation_report: {},
+  };
+  await page.route(`**/api/analyses/${id}**`, async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("/validate")) {
+      validated = true;
+      await route.fallback();
+    } else if (path.endsWith("/ingest")) {
+      events.push("POST " + path);
+      await route.fulfill({
+        json: { data: { nextStep: "validate", remainingFiles: 0 } },
+      });
+    } else if (!validated && path.endsWith(id)) {
+      await route.fulfill({
+        json: {
+          data: {
+            analysis,
+            inputs: [
+              {
+                id: "input",
+                status: "extracted",
+                original_name: "test.pdf",
+                normalized_text: source,
+              },
+            ],
+            result: null,
+          },
+        },
+      });
+    } else if (!validated && path.endsWith("/activity")) {
+      await route.fulfill({
+        json: { data: { analysis, items: [], chunks: [] } },
+      });
+    } else await route.fallback();
+  });
+  await page.goto(`/?analysis=${id}`);
+  await expect(
+    page.getByText(
+      "Đã đọc xong nội dung. Tiếp tục để kiểm tra và dựng cấu trúc tài liệu.",
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Kiểm tra tài liệu trước khi xử lý" }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Tiếp tục đọc tài liệu" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Kiểm tra tài liệu trước khi xử lý" }),
+  ).toBeVisible();
+  expect(events.some((e) => e.endsWith("/validate"))).toBe(true);
+  expect(events.some((e) => e.endsWith("/confirm"))).toBe(false);
 });

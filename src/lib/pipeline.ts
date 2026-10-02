@@ -969,8 +969,8 @@ async function continueQuizChunk(
     );
   chunk.quiz_finished = finished;
   return {
-    quizCompleted:
-      chunks.filter((c) => c.quiz_finished).length + (finished ? 1 : 0),
+    quizCompleted: chunks.filter((c, i) => c.quiz_finished && quotas[i] > 0)
+      .length,
     quizTotal: chunks.filter((_, i) => quotas[i] > 0).length,
     waitMs: 300,
   };

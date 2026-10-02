@@ -450,8 +450,8 @@ export function useWorkspace() {
   }, [toast]);
 
   useEffect(() => {
-    api<{ data: Topic[] }>("/api/topics")
-      .then((response) => setTopics(response.data ?? []))
+    api<Topic[]>("/api/topics")
+      .then((response) => setTopics(Array.isArray(response) ? response : []))
       .catch(() => undefined);
   }, []);
 
@@ -959,6 +959,8 @@ export function useWorkspace() {
 
   async function openHistoryItem(item: HistoryRow) {
     setActivities([]);
+    setPendingIngestId(null);
+    setPendingUploads([]);
     setReport(null);
     setOutline([]);
     setScreen("processing");
@@ -973,6 +975,7 @@ export function useWorkspace() {
         result: { id: string; result_json: ResultJson } | null;
       }>(`/api/analyses/${item.id}?includeContent=true`);
       setAnalysis(details.analysis);
+      setTitle(details.analysis.title);
       setInputRows(details.inputs);
       setReviewDirty(false);
       // Restore the session's own settings so saving the review does not overwrite them with defaults.
@@ -1024,7 +1027,9 @@ export function useWorkspace() {
         setLoadingLabel(
           ingestBlocked(details.inputs)
             ? "Tệp cần tách nhỏ hoặc chuyển đổi trước khi đọc lại."
-            : "Đang đọc tài liệu dở. Checkpoint đã lưu; có thể tiếp tục.",
+            : details.inputs.every((input) => input.status === "extracted")
+              ? "Đã đọc xong nội dung. Tiếp tục để kiểm tra và dựng cấu trúc tài liệu."
+              : "Đang đọc tài liệu dở. Checkpoint đã lưu; có thể tiếp tục.",
         );
         if (details.analysis.error_message)
           setError(details.analysis.error_message);
