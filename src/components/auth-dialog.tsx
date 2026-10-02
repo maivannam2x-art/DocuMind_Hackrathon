@@ -10,7 +10,7 @@ type Profile = { email: string; displayName: string; username: string; avatarUrl
 function errorText(message: string) {
   if (/invalid login credentials/i.test(message)) return "Email hoặc mật khẩu chưa chính xác.";
   if (/user already registered/i.test(message)) return "Email này đã có tài khoản. Hãy đăng nhập.";
-  if (/email not confirmed/i.test(message)) return "Hãy xác nhận email trước khi đăng nhập.";
+  if (/email not confirmed/i.test(message)) return "Tài khoản cũ chưa được kích hoạt. Hãy liên hệ người quản trị để hỗ trợ.";
   if (/rate limit|too many requests/i.test(message)) return "Bạn thao tác quá nhanh. Hãy chờ một chút rồi thử lại.";
   if (/password should be at least/i.test(message)) return "Mật khẩu cần có ít nhất 8 ký tự.";
   return message;
@@ -106,24 +106,17 @@ export function AuthDialog({ initialMode, email, onClose, onAuthenticated }: {
         onAuthenticated();
         onClose();
       } else if (mode === "sign-up") {
-        const { data, error: authError } = await client.auth.signUp({
-          email: formEmail.trim(),
-          password,
-          options: {
-            data: { display_name: displayName.trim() },
-            emailRedirectTo: `${window.location.origin}/auth/callback`,
-          },
+        const response = await fetch("/api/auth/register", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ displayName: displayName.trim(), email: formEmail.trim(), password, passwordConfirmation }),
         });
+        const payload = await response.json().catch(() => ({})) as { error?: { message?: string } };
+        if (!response.ok) throw new Error(payload.error?.message ?? "Không thể tạo tài khoản.");
+        const { error: authError } = await client.auth.signInWithPassword({ email: formEmail.trim(), password });
         if (authError) throw new Error(errorText(authError.message));
-        if (data.session) {
-          onAuthenticated();
-          onClose();
-        } else {
-          setMessage("Tài khoản đã được tạo. Hãy mở email xác nhận để kích hoạt rồi đăng nhập.");
-          setMode("sign-in");
-          setPassword("");
-          setPasswordConfirmation("");
-        }
+        onAuthenticated();
+        onClose();
       } else {
         const profile = await requestProfile("PATCH", { displayName: displayName.trim(), username: username.trim() });
         if (profile) {

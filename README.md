@@ -1,64 +1,29 @@
-# DocuMind backend
+# DocuMind
 
-Backend for DocuMind's IT document-to-learning flow. The active topic catalog focuses on programming, software engineering, databases, networks, cybersecurity, AI/ML, cloud/DevOps, operating systems and related IT fields. It supports authenticated and guest sessions, multi-file/pasted input, review before processing, chunked LLM generation, validated dynamic JSON results, quizzes, follow-up chat and exports.
+Trợ lý học từ tài liệu IT: nhập nhiều file/văn bản → đọc và kiểm tra → xem/sửa đề mục → xác nhận → AI phân tích → tổng quan, tóm tắt, chi tiết, quiz, chat và báo cáo.
 
-## Setup
+## Chạy lại trên máy thi
 
-1. Copy .env.example to .env.local and set `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` (or the legacy anon key), and the server-only `SUPABASE_SERVICE_ROLE_KEY`.
-2. Apply all SQL files in supabase/migrations in filename order. Seeds include topics, validation rules and versioned prompt templates; private buckets are created by the first migration.
-3. In Supabase Auth URL Configuration, set the Site URL to the deployed origin and allow `http://localhost:3000/auth/callback` plus `https://docu-mind-hackrathon.vercel.app/auth/callback` as redirect URLs for email verification.
-4. Run npm install, then npm run dev.
-5. LLM_PROVIDER=mock is the default and exercises the complete flow without keys, including static OCR samples for images/scanned PDFs, source-grounded quizzes and retrieval-style chat answers (see `src/lib/mock-llm.ts`). Mock output is labelled as simulated. Set LLM_PROVIDER=gemini and add GEMINI_API_KEY to enable Gemini.
+1. Node.js 22, Git. `npm ci`.
+2. Supabase project trống: chạy **một lần** `database/01_fresh_production_bootstrap.sql`, rồi `database/03_verify_installation.sql`. Đủ 19 bảng public, 73 ngành IT, 43 prompt active, 7 rule, 3 bucket private. Không chạy lại migration sau bootstrap SQL Editor.
+3. Copy `.env.example` thành `.env.local`, điền URL/key public Supabase và **server-only** service role của project mới. `LLM_PROVIDER=mock` không cần Gemini nhưng vẫn cần Supabase; `LLM_PROVIDER=gemini` cần `GEMINI_API_KEY`.
+4. `npm run dev` để phát triển; `npm run build` rồi `npm run start` để demo bản build tại localhost:3000.
+5. `npm test`, `npm run lint`, `npm run typecheck`; sau build, `npx playwright install chromium` và `npm run test:e2e`.
 
-Never expose SUPABASE_SERVICE_ROLE_KEY or GEMINI_API_KEY in client-side code.
+Bộ triển khai/phân công/giải thích: [docs/hackathon-kit/00_START_HERE.md](docs/hackathon-kit/00_START_HERE.md).
 
-## Flow
+## Hành vi thực tế
 
-POST /api/analyses creates a guest or owned analysis. Submit text or multipart files, then POST /api/analyses/:id/validate; inspect and optionally edit the extracted source and outline with PATCH /api/analyses/:id/review; explicitly confirm with POST /api/analyses/:id/confirm; process with POST /api/analyses/:id/run; fetch status/result; then use quiz, chat and export endpoints.
+Đăng ký mới qua API server `/api/auth/register`, tạo account với `email_confirm:true`, tự đăng nhập bằng mật khẩu; **không có bước xác nhận email**. Profile do trigger `on_auth_user_created` tạo. Không tự sửa tài khoản cũ, không lưu mật khẩu ở public.profiles. `auth/callback` giữ tương thích link cũ. Đăng nhập/đăng xuất dùng Supabase Auth; server kiểm JWT qua `auth.getUser`.
 
-An analysis is not sent to an LLM before confirmation. Each chunk is persisted, generated output is parsed and schema-checked, and malformed model output gets one repair attempt. Structured blocks use `contentType` (`json`, `table`, `latex`, `mermaid`, `plantuml`, or `code`) so the frontend can render data, formulas, diagrams, tables, and source without treating arbitrary objects as visible JSON. A failed chunk leaves an actionable error and can be retried via /run.
+File gốc upload trực tiếp bucket private bằng URL được ký, nội dung dán cũng lưu TXT. `/ingest` đọc theo checkpoint; PDF ở chế độ Gemini gửi từng trang sang AI kể cả khi có text layer để giữ hình/bảng/công thức. Word đọc text/table bằng code, chỉ gọi AI cho ảnh/Office Math/drawing cần nhận dạng. TXT/CSV/mã nguồn parse nội bộ. **OCR có thể gọi AI trước bước xác nhận**; xác nhận kiểm soát giai đoạn phân tích/quiz tiếp theo.
 
-When quiz generation returns an incomplete or differently wrapped response, the backend normalizes supported shapes and creates source-grounded true/false questions for any remaining slots. A temporary quiz LLM error does not silently result in a completed analysis with an empty quiz.
+`outlineText` xác định đề mục theo chuỗi và phân cấp; `chunkText` ưu tiên mục lớn, tách mục con khi dài, gộp mục ngắn. `/validate` ghi vị trí cảnh báo theo file/trang; `/review` lưu chỉnh sửa và chia lại. `/confirm` chuyển ready. `/run` xử lý nhóm chunk có giới hạn song song, lưu checkpoint; frontend tiếp tục gọi đến khi completed. F5 mở lại bằng ID/lịch sử. Chưa có worker tự chạy tiếp vô hạn sau khi đóng browser.
 
-The result workspace has separate overview, summary, detailed analysis, interactive quiz, contextual chat, and report export views. Reports can be downloaded as PDF, Word (`.docx`), Markdown, HTML, or JSON. JSON is an explicitly labelled machine-readable export; it is never rendered as ordinary prose.
+Kết quả JSON có sections/blocks và contentType; frontend dựng text/list/table/code/json riêng. LaTeX/Mermaid được code dựng **PNG** và upload `analysis-assets`; DB không lưu ảnh base64. PDF/DOCX nhúng PNG, HTML nhúng PNG để mở offline, Markdown là ZIP gồm report.md và ảnh; JSON giữ nội dung có kiểu và metadata/path. PlantUML chưa có renderer, cần chuyển Mermaid; lỗi hiện rõ, không giả báo cáo thành công.
 
-## API routes
+Quiz mặc định 20, nhận số nguyên dương người dùng chọn, tạo theo batch và nguồn; thiếu nội dung được báo. Chat lấy nguồn liên quan. IT có catalog/prompt chuyên ngành; ngoài IT dùng fallback chung. Mock luôn được đánh dấu mô phỏng, OCR mock không chứng minh đọc ảnh thật.
 
-- GET /api/health, GET /api/topics
-- GET /api/prompts
-- GET/PATCH /api/profile (authenticated)
-- POST /api/analyses, GET /api/analyses
-- GET /api/analyses/:id, POST /validate, PATCH /review, POST /confirm, POST /run, GET /result
-- GET /api/analyses/:id/quiz, POST /quiz/attempts
-- GET/POST /api/analyses/:id/chat
-- POST /api/analyses/:id/exports (`pdf`, `docx`, `markdown`, `html`, `json`)
+Model được đối chiếu catalog Gemini thật, chuyển theo thứ tự; 5 lỗi liên tiếp khóa model 5 phút qua RPC dùng chung, một probe khi hết cooldown. Nhật ký AI/hệ thống luôn hiện; log nội dung mặc định redacted. Guest dùng cookie HttpOnly, dữ liệu DB có TTL mặc định 24 giờ; đăng nhập không tự nhập dữ liệu guest vào account. Cron cleanup bảo vệ bằng `CRON_SECRET`; chạy máy riêng cần tự gọi lịch dọn nếu sử dụng lâu dài.
 
-Guest requests receive an HttpOnly dm_guest cookie. Guest data stops being accessible at its expiry time; the scheduled cleanup then removes expired rows and stored files. Configure CRON_SECRET in the hosting environment for cleanup. Authenticated history is scoped by Supabase Auth user ID. Public clients cannot modify analysis state or read quiz answers directly.
-
-Users can sign up with email/password, verify email through `/auth/callback`, sign in, edit their display name and username, and sign out locally. Active guest analyses keep using their guest cookie if a user signs in before finishing; new analyses created while signed in are owned by the account.
-
-After confirmation, topic routing uses specialized IT prompts when the source supports an IT classification. Documents outside IT or without enough evidence use global fallback prompts for analysis, quizzes, chat, and JSON repair. These prompts stay grounded in the source and avoid claiming the same depth as IT-specific prompts. Results record `metadata.promptScope` as `it_specialized` or `general_fallback` and include the detected topic label.
-
-## Request example
-
-Create a guest analysis with pasted text:
-
-```sh
-curl -i -c cookies.txt -X POST http://localhost:3000/api/analyses \
-  -H 'content-type: application/json' \
-  -d '{"title":"Cơ sở dữ liệu","topicCode":"IT","quizEnabled":true,"text":"Nội dung tài liệu dài ít nhất 40 ký tự..."}'
-```
-
-Keep the returned analysis ID, then send the same cookie jar through validate, review, confirm and run. For signed-in users, send the Supabase access token as an Authorization Bearer token. The browser requests short-lived signed upload URLs from the API, uploads files directly to the private `analysis-inputs` bucket, and then calls the ingest route. This avoids sending large files through Vercel Functions. Each file is capped at `MAX_UPLOAD_MB` (default 20 MB); visual OCR inputs are capped at `MAX_VISION_MB` (default 8 MB).
-
-Supported inputs include PDF, DOCX, TXT, Markdown, JSON, common IT source-code formats, PNG, JPG, and JPEG. Text-layer PDFs and DOCX files are parsed locally. Scanned PDFs and raster images use Gemini Vision. DOCX OCR inspects up to three embedded PNG/JPEG images. The review screen shows an image preview and editable extracted text so users can correct OCR before confirming analysis.
-
-LaTeX formulas render with KaTeX. Mermaid diagrams render in the result view with strict security settings and are stored as private SVG assets. HTML exports embed the saved SVG, while PDF and Word exports embed PNG renderings if the result view has persisted them; otherwise the structured data retains the diagram source. Apply `20260929051348_documind_visual_assets.sql` to create the private `analysis-assets` bucket. The browser only receives short-lived signed asset/upload URLs; server-only Supabase credentials remain on the server.
-
-## Data model
-
-The schema has 16 application tables. Inputs and chunks are separately stored for per-file review/retry; results use versioned JSON with dynamic sections and typed blocks. Quiz candidates are generated from chunks, deduplicated, and stored with answer keys that are available only to the server scoring route. Versioned prompts cover IT-specific work and a general fallback for documents outside IT or with an unclear topic; programming, database and cybersecurity have tailored analysis prompts.
-
-## Tests
-
-Run `npm test`, `npm run lint`, `npm run typecheck`, and `npm run build`.
+Không commit `.env.local`, service role, Gemini key, token phiên hay dữ liệu người dùng.
