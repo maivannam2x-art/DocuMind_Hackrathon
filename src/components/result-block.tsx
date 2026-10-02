@@ -4,7 +4,7 @@ import React, { useEffect, useId, useRef, useState } from "react";
 import katex from "katex";
 import { renderMermaid } from "@/lib/mermaid-browser";
 import { getSupabaseAccessToken } from "@/lib/supabase-browser";
-import { scalarText, tableValues, type ResultBlock } from "@/lib/result-content";
+import { listItemText, scalarText, tableValues, type ResultBlock } from "@/lib/result-content";
 
 function MermaidDiagram({ source, analysisId, resultId, expand = false }: { source: string; analysisId?: string; resultId?: string; expand?: boolean }) {
   const id = `mermaid-${useId().replaceAll(":", "")}`;
@@ -50,6 +50,35 @@ function MermaidDiagram({ source, analysisId, resultId, expand = false }: { sour
       {!svg && !error && source.length <= 10000 && <p className="diagram-error">Đang kiểm tra cú pháp sơ đồ...</p>}
       <details><summary>Xem mã Mermaid</summary><pre>{source}</pre></details></>}
   </details>;
+}
+
+/** Inline **bold** and `code` as React nodes; the text is never injected as HTML. */
+function InlineText({ text }: { text: string }) {
+  const parts = text.split(/(\*\*[^*\n]+\*\*|`[^`\n]+`)/g);
+  return <>{parts.map((part, index) => part.startsWith("**") && part.endsWith("**") && part.length > 4 ? <strong key={index}>{part.slice(2, -2)}</strong>
+    : part.startsWith("`") && part.endsWith("`") && part.length > 2 ? <code key={index}>{part.slice(1, -1)}</code> : part)}</>;
+}
+
+const BULLET = /^\s*(?:[-*•+]|\d{1,3}[.)])\s+/;
+
+/** Readable prose: blank-line paragraphs, bullet runs as lists, single newlines kept. */
+export function RichText({ text }: { text: string }) {
+  const groups: Array<{ list: boolean; lines: string[] }> = [];
+  for (const line of text.split("\n")) {
+    if (!line.trim()) { groups.push({ list: false, lines: [] }); continue; }
+    const list = BULLET.test(line);
+    const last = groups.at(-1);
+    if (last && last.list === list && (list || last.lines.length)) last.lines.push(line); else groups.push({ list, lines: [line] });
+  }
+  return <div className="block-content rich-text">{groups.filter(group => group.lines.length).map((group, index) => group.list
+    ? <ul key={index} className="result-list">{group.lines.map((line, lineIndex) => <li key={lineIndex}><InlineText text={line.replace(BULLET, "")} /></li>)}</ul>
+    : <p key={index}>{group.lines.map((line, lineIndex) => <React.Fragment key={lineIndex}>{lineIndex > 0 && <br />}<InlineText text={line} /></React.Fragment>)}</p>)}</div>;
+}
+
+function ListItem({ item }: { item: unknown }) {
+  const text = listItemText(item);
+  const split = item && typeof item === "object" && !Array.isArray(item) ? text.indexOf(": ") : -1;
+  return split > 0 ? <li><strong>{text.slice(0, split)}</strong> — <InlineText text={text.slice(split + 2)} /></li> : <li><InlineText text={text} /></li>;
 }
 
 function StructuredData({ value }: { value: Record<string, unknown> }) {
@@ -100,13 +129,13 @@ export function ResultBlockView({ block, analysisId, resultId, expandDiagram = f
   } else if (contentType === "table" || type === "table") {
     body = <TableView content={block.content} />;
   } else if (type === "list" || type === "key_points" || Array.isArray(block.content)) {
-    body = <ul className="result-list">{(Array.isArray(block.content) ? block.content : [block.content]).map((item, index) => <li key={index}>{scalarText(item)}</li>)}</ul>;
+    body = <ul className="result-list">{(Array.isArray(block.content) ? block.content : [block.content]).map((item, index) => <ListItem key={index} item={item} />)}</ul>;
   } else if (contentType === "code" || ["code", "sql", "command"].includes(type)) {
     body = <pre className="code-view"><code>{source}</code></pre>;
   } else if (block.content && typeof block.content === "object" && !Array.isArray(block.content)) {
     body = <div><span className="format-badge">Dữ liệu có cấu trúc · chưa được đánh dấu JSON</span><StructuredData value={block.content as Record<string, unknown>} /></div>;
   } else {
-    body = <div className="block-content">{source}</div>;
+    body = <RichText text={source} />;
   }
 
   return <div className={`content-block content-${contentType ?? type}`}>

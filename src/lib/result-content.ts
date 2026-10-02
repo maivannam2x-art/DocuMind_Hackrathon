@@ -13,6 +13,19 @@ export function scalarText(value: unknown): string {
   return String(value);
 }
 
+/** Text for one list entry; LLMs often return `{ title, detail }` objects instead of strings. */
+export function listItemText(item: unknown): string {
+  const record = item && typeof item === "object" && !Array.isArray(item) ? item as Record<string, unknown> : null;
+  if (record) {
+    const pick = (...keys: string[]) => keys.map(key => record[key]).find((value): value is string => typeof value === "string" && value.trim().length > 0)?.trim();
+    const head = pick("title", "term", "point", "name", "label", "heading");
+    const body = pick("detail", "description", "explanation", "content", "text", "value", "summary");
+    if (head && body) return `${head}: ${body}`;
+    if (head ?? body) return (head ?? body)!;
+  }
+  return scalarText(item);
+}
+
 export function tableValues(content: unknown): { headers: string[]; rows: string[][] } | null {
   if (typeof content === "string") {
     const rows = content.split("\n").filter(line => line.trim().startsWith("|")).map(line => line.trim().replace(/^\||\|$/g, "").split("|").map(cell => cell.trim()));
@@ -40,5 +53,6 @@ export function blockToPlainText(block: ResultBlock): string {
     const rows = Array.isArray(block.content) ? block.content : Array.isArray(object?.rows) ? object.rows : [];
     return rows.map(row => scalarText(row)).join("\n");
   }
+  if (Array.isArray(block.content) && ["list", "key_points"].includes(type.replaceAll("-", "_"))) return block.content.map(listItemText).join("\n");
   return scalarText(block.content);
 }

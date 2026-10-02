@@ -1,3 +1,5 @@
+import { buildStaticQuiz, hashSeed, shuffleOptions } from "@/lib/static-quiz";
+
 export type QuizCandidate = {
   prompt: string;
   options: string[];
@@ -64,21 +66,10 @@ export function normalizeQuizCandidates(value: unknown, chunkId: string): QuizCa
 }
 
 export function createSourceGroundedFallback(source: string, chunkId: string, limit = 3): QuizCandidate[] {
-  const sentences = source
-    .replace(/\s+/g, " ")
-    .split(/(?<=[.!?。！？])\s+/)
-    .map(sentence => sentence.trim())
-    .filter(sentence => sentence.length >= 28);
-  const statements = (sentences.length ? sentences : [source.replace(/\s+/g, " ").trim()])
-    .filter(sentence => sentence.length >= 28)
-    .slice(0, limit);
-  return statements.map((statement, index) => ({
-    prompt: `Tài liệu có hỗ trợ phát biểu sau không? “${statement.slice(0, 450)}”`,
-    options: ["Có, phát biểu phù hợp với tài liệu", "Không, tài liệu không hỗ trợ phát biểu này"],
-    answerIndex: 0,
-    explanation: "Phát biểu được trích trực tiếp từ phần tài liệu đã gửi.",
-    difficulty: index === 0 ? "easy" : "medium",
-    questionType: "true_false",
-    chunkId,
-  }));
+  return buildStaticQuiz(source, limit, chunkId).map(question => ({ ...question, chunkId }));
+}
+
+/** Persist-time option shuffle so a model's habit of putting the answer first does not leak. */
+export function shuffleCandidateOptions(candidate: QuizCandidate): QuizCandidate {
+  return shuffleOptions(candidate, hashSeed(`${candidate.chunkId}:${candidate.prompt}`));
 }

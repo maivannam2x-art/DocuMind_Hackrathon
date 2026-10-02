@@ -40,15 +40,17 @@ export async function POST(request: NextRequest, context: Context) {
     if (historyError) throw new ApiError(500, "CHAT_LOAD_FAILED", "Không tải được ngữ cảnh trò chuyện.", historyError.message);
     if (!result) throw new ApiError(404, "RESULT_NOT_FOUND", "Không tìm thấy kết quả phân tích.");
     const prompt = await loadPrompt("chat", analysis.topic_id, analysis.specialization_id);
+    // Array#reverse mutates; compute the chronological transcript once and reuse it.
+    const transcript = [...(history ?? [])].reverse().map((message: { role: string; content: string }) => `${message.role}: ${message.content}`);
     const groundedContext = [
       result.summary ?? "",
       JSON.stringify(result.result_json).slice(0, 8000),
-      ...(history ?? []).reverse().map((message: { role: string; content: string }) => `${message.role}: ${message.content}`),
+      ...transcript,
     ].filter(Boolean).join("\n").slice(0, 12000);
     const userPrompt = prompt.user_prompt_template
       .replace(/\{\{\s*topic\s*\}\}/g, analysis.topic_id ? "Công nghệ thông tin" : "chủ đề chung hoặc chưa xác định")
       .replace(/\{\{\s*summary\s*\}\}/g, groundedContext)
-      .replace(/\{\{\s*history\s*\}\}/g, (history ?? []).reverse().map((message: { role: string; content: string }) => `${message.role}: ${message.content}`).join("\n"))
+      .replace(/\{\{\s*history\s*\}\}/g, transcript.join("\n"))
       .replace(/\{\{\s*question\s*\}\}/g, body.message);
     const started = Date.now();
     const completion = await generateLlm({ purpose: "chat", system: prompt.system_prompt, prompt: userPrompt, schema: prompt.output_schema });

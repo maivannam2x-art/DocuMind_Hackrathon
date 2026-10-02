@@ -1,5 +1,6 @@
 import { getAdminDb } from "@/lib/db";
 import { ApiError } from "@/lib/http";
+import { mockResponse } from "@/lib/mock-llm";
 
 export type LlmPurpose = "section_generation" | "quiz_generation" | "chat" | "repair" | "topic_detection" | "document_ocr" | "overview_generation";
 export type LlmRequest = {
@@ -55,9 +56,7 @@ export async function generateLlm(request: LlmRequest): Promise<LlmResult> {
   const model = process.env.GEMINI_MODEL ?? "gemini-3.8-flash";
   const started = Date.now();
   if (provider === "mock") {
-    if (request.purpose === "document_ocr") {
-      throw new ApiError(503, "VISION_PROVIDER_REQUIRED", "Để đọc chữ, công thức hoặc sơ đồ trong ảnh, hãy cấu hình LLM_PROVIDER=gemini và GEMINI_API_KEY.");
-    }
+    // Static outputs for every purpose, including OCR, until real providers are wired in.
     const value = mockResponse(request);
     const raw = JSON.stringify(value);
     return { value, raw, provider: "mock", model: "documind-deterministic", latencyMs: Date.now() - started };
@@ -100,64 +99,4 @@ export async function generateLlm(request: LlmRequest): Promise<LlmResult> {
     outputTokens: payload.usageMetadata?.candidatesTokenCount,
     latencyMs: Date.now() - started,
   };
-}
-
-function mockResponse(request: LlmRequest): unknown {
-  const prompt = request.prompt;
-  if (request.purpose === "topic_detection") {
-    const text = (prompt.match(/Nội dung:\s*([\s\S]+)$/)?.[1] ?? prompt).toLowerCase();
-    const candidates: Array<[string, RegExp]> = [
-      ["databases", /\b(sql|database|databases|postgres|mysql|mongodb|cơ sở dữ liệu|truy vấn|index|transaction)\b/i],
-      ["cybersecurity", /\b(cybersecurity|security|owasp|encryption|authentication|authorization|bảo mật|an ninh mạng|mật mã)\b/i],
-      ["cloud-devops", /\b(cloud|devops|docker|kubernetes|ci\/cd|deployment|hạ tầng|container)\b/i],
-      ["computer-networks", /\b(computer network|tcp\/ip|tcp|http|dns|routing|mạng máy tính|giao thức mạng)\b/i],
-      ["artificial-intelligence", /\b(ai|machine learning|deep learning|llm|neural network|trí tuệ nhân tạo|học máy)\b/i],
-      ["data-structures-algorithms", /\b(algorithm|data structure|big o|độ phức tạp|giải thuật|cấu trúc dữ liệu)\b/i],
-      ["software-testing", /\b(unit test|integration test|testing|test case|kiểm thử|kiểm tra phần mềm)\b/i],
-      ["operating-systems", /\b(operating system|linux kernel|process|thread|memory management|hệ điều hành|tiến trình)\b/i],
-      ["programming-languages", /\b(python|javascript|typescript|java|c\+\+|golang|rust|lập trình|source code|mã nguồn)\b/i],
-      ["web-development", /\b(frontend|backend|web development|react|next\.js|html|css|rest api|phát triển web)\b/i],
-    ];
-    const detected = candidates.find(([, pattern]) => pattern.test(text));
-    if (!detected) return { isIT: false, specializationSlug: null, detectedTopic: "Chủ đề chưa xác định hoặc ngoài IT", confidence: 0.35, reason: "Không tìm thấy đủ thuật ngữ đặc trưng để gán chuyên ngành IT; dùng prompt chung." };
-    return { isIT: true, specializationSlug: detected[0], detectedTopic: "Công nghệ thông tin", confidence: 0.86, reason: "Tìm thấy thuật ngữ kỹ thuật IT trong tài liệu." };
-  }
-  if (request.purpose === "chat") {
-    const question = prompt.match(/Câu hỏi:\s*([\s\S]+)$/)?.[1]?.trim() ?? "câu hỏi của bạn";
-    return { answer: `Theo tài liệu đã phân tích, ${question} Hãy tham khảo các section liên quan trong kết quả để xem phần giải thích và nguồn cụ thể.`, citations: ["analysis_result"] };
-  }
-  if (request.purpose === "quiz_generation") {
-    const source = prompt.match(/Nội dung:\s*([\s\S]+)$/)?.[1] ?? prompt;
-    const sentences = source.split(/(?<=[.!?])\s+|\n+/).map(x => x.trim()).filter(x => x.length > 30);
-    const make = (sentence: string, index: number) => ({
-      prompt: `Theo tài liệu, phát biểu nào mô tả đúng nội dung ở câu ${index + 1}?`,
-      options: [sentence.slice(0, 160), "Nội dung này không được đề cập trong nguồn.", "Tài liệu đưa ra kết luận ngược lại.", "Không có thông tin liên quan."],
-      answerIndex: 0,
-      explanation: "Đáp án được trích từ đoạn nội dung nguồn.",
-      difficulty: index === 0 ? "easy" : "medium",
-    });
-    const questions = (sentences.length ? sentences : [source.slice(0, 140) || "Tài liệu cung cấp kiến thức nền tảng."]).slice(0, 3).map(make);
-    return { questions };
-  }
-  if (request.purpose === "repair") return { sections: [{ title: "Tài liệu", blocks: [{ type: "paragraph", content: "Nội dung mô phỏng đã được chuẩn hóa." }] }] };
-  const body = prompt.match(/Nội dung:\s*([\s\S]+)$/)?.[1] ?? prompt;
-  const lines = body.split(/\n+/).map(value => value.trim()).filter(Boolean);
-  const title = lines[0]?.replace(/^#+\s*/, "").slice(0, 100) || "Nội dung tài liệu";
-  // Demo mode must retain the source of each chunk so long documents do not
-  // silently lose everything after the first four lines.
-  const paragraphs = lines.filter((line, index) => index > 0);
-  const content = body.slice(0, 12000);
-  const visualBlocks: Array<{ type: string; contentType: string; content: string }> = [];
-  for (const match of body.matchAll(/```(mermaid|plantuml|latex|tex)\s*\n([\s\S]*?)```/gi)) {
-    const language = match[1].toLowerCase();
-    visualBlocks.push({ type: language === "latex" || language === "tex" ? "formula" : "diagram", contentType: language === "tex" ? "latex" : language, content: match[2].trim() });
-  }
-  for (const match of body.matchAll(/\$\$([\s\S]*?)\$\$/g)) {
-    if (match[1].trim()) visualBlocks.push({ type: "formula", contentType: "latex", content: match[1].trim() });
-  }
-  const sections = [
-    { title: "Ý chính", summary: "Các ý trọng tâm được rút ra từ phần tài liệu này.", blocks: [{ type: "summary", content }] },
-    { title: "Nội dung và cấu trúc", blocks: [{ type: "paragraph", content: `Trích nội dung nguồn thuộc phần “${title}”.` }, { type: "key_points", content: paragraphs.slice(0, 8) }, ...visualBlocks] },
-  ];
-  return { title, summary: `Bản mô phỏng: nội dung nguồn của phần ${title}. Cần Gemini để có phân tích chuyên sâu.`, sections };
 }

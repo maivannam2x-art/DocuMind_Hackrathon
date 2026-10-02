@@ -8,7 +8,7 @@ Backend for DocuMind's IT document-to-learning flow. The active topic catalog fo
 2. Apply all SQL files in supabase/migrations in filename order. Seeds include topics, validation rules and versioned prompt templates; private buckets are created by the first migration.
 3. In Supabase Auth URL Configuration, set the Site URL to the deployed origin and allow `http://localhost:3000/auth/callback` plus `https://docu-mind-hackrathon.vercel.app/auth/callback` as redirect URLs for email verification.
 4. Run npm install, then npm run dev.
-5. LLM_PROVIDER=mock is the default and exercises the complete flow without keys. Set LLM_PROVIDER=gemini and add GEMINI_API_KEY to enable Gemini.
+5. LLM_PROVIDER=mock is the default and exercises the complete flow without keys, including static OCR samples for images/scanned PDFs, source-grounded quizzes and retrieval-style chat answers (see `src/lib/mock-llm.ts`). Mock output is labelled as simulated. Set LLM_PROVIDER=gemini and add GEMINI_API_KEY to enable Gemini.
 
 Never expose SUPABASE_SERVICE_ROLE_KEY or GEMINI_API_KEY in client-side code.
 

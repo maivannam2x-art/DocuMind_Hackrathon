@@ -3,7 +3,7 @@ import PDFDocument from "pdfkit";
 import { Document, HeadingLevel, ImageRun, Packer, Paragraph, Table, TableRow, TableCell, WidthType } from "docx";
 import katex from "katex";
 import { renderFormulaPng } from "@/lib/formula";
-import { blockToPlainText, tableValues, type ResultBlock } from "@/lib/result-content";
+import { blockToPlainText, listItemText, tableValues, type ResultBlock } from "@/lib/result-content";
 
 export type ReportSection = { title: string; summary?: string; blocks: ResultBlock[] };
 export type ReportDocument = { title?: string; summary?: string; conclusion?: string; sections?: ReportSection[] };
@@ -59,7 +59,7 @@ function markdownBlock(block: ResultBlock) {
     const table = tableValues(block.content);
     if (table) return [table.headers, table.headers.map(() => "---"), ...table.rows].map(row => `| ${row.map(cell => cell.replaceAll("|", "\\|").replaceAll("\n", " ")).join(" | ")} |`).join("\n");
   }
-  if (isList(block)) return (Array.isArray(block.content) ? block.content : [block.content]).map(item => `- ${String(item)}`).join("\n");
+  if (isList(block)) return (Array.isArray(block.content) ? block.content : [block.content]).map(item => `- ${listItemText(item)}`).join("\n");
   if (isCode(block)) return `\n\`\`\`\n${text}\n\`\`\``;
   if (block.contentType === "mermaid" || block.type === "mermaid") return `\n\`\`\`mermaid\n${text}\n\`\`\``;
   if (block.contentType === "latex" || ["formula", "math", "equation"].includes(block.type)) return `\n$$\n${text}\n$$`;
@@ -83,7 +83,7 @@ function htmlBlock(block: ResultBlock) {
     const table = tableValues(block.content);
     if (table) return `<table style="width:100%;border-collapse:collapse;margin:16px 0"><thead><tr>${table.headers.map(cell => `<th style="border:1px solid #dedbe8;padding:8px;background:#f4f1fb;text-align:left">${escapeHtml(cell)}</th>`).join("")}</tr></thead><tbody>${table.rows.map(row => `<tr>${row.map(cell => `<td style="border:1px solid #dedbe8;padding:8px">${escapeHtml(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
   }
-  if (isList(block)) return `<ul>${(Array.isArray(block.content) ? block.content : [block.content]).map(item => `<li>${escapeHtml(String(item))}</li>`).join("")}</ul>`;
+  if (isList(block)) return `<ul>${(Array.isArray(block.content) ? block.content : [block.content]).map(item => `<li>${escapeHtml(listItemText(item))}</li>`).join("")}</ul>`;
   if (block.contentType === "latex" || ["formula", "math", "equation"].includes(block.type)) {
     const math = typeof block.metadata?.latex === "string" ? block.metadata.latex : text;
     const normalized = math.trim().replace(/^\$\$?|\$\$?$/g, "");
@@ -224,7 +224,7 @@ export async function reportToDocx(report: ReportDocument): Promise<Buffer> {
         } catch { /* Preserve the labeled LaTeX source for an invalid formula. */ }
       }
       children.push(new Paragraph({ text: blockLabel(block), heading: HeadingLevel.HEADING_3 }));
-      const values = isList(block) && Array.isArray(block.content) ? block.content.map(String) : [blockToPlainText(block)];
+      const values = isList(block) && Array.isArray(block.content) ? block.content.map(listItemText) : [blockToPlainText(block)];
       for (const value of values) children.push(new Paragraph({ text: value, bullet: isList(block) ? { level: 0 } : undefined }));
     }
   }

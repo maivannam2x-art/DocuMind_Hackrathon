@@ -4,7 +4,7 @@ import { getAdminDb } from "@/lib/db";
 import { ApiError } from "@/lib/http";
 import { assertResult } from "@/lib/validation";
 import { generateLlm, loadPrompt, type LlmPurpose, type LlmResult } from "@/lib/llm";
-import { createSourceGroundedFallback, normalizeQuizCandidates, type QuizCandidate } from "@/lib/quiz";
+import { createSourceGroundedFallback, normalizeQuizCandidates, shuffleCandidateOptions, type QuizCandidate } from "@/lib/quiz";
 import { fallbackOverview, summaryContext, validatedOverview, type SummarySection } from "@/lib/overview";
 import { preserveSourceVisuals } from "@/lib/source-content";
 
@@ -289,7 +289,7 @@ async function generateQuiz(
     if (fallback.length) usedFallback = true;
     candidates.push(...fallback);
   }
-  const unique = Array.from(new Map(candidates.map(q => [q.prompt.toLocaleLowerCase(), q])).values()).slice(0, 20);
+  const unique = Array.from(new Map(candidates.map(q => [q.prompt.toLocaleLowerCase(), q])).values()).slice(0, 20).map(shuffleCandidateOptions);
   if (!unique.length) return;
   const { data: quiz, error } = await db.from("quizzes").insert({
     analysis_id: analysisId, result_id: resultId, title: "Ôn tập nhanh",

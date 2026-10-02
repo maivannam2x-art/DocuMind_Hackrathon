@@ -62,10 +62,13 @@ describe("document preparation", () => {
     expect(request.contents[0].parts[1].inlineData?.data).toBe(pngSignature.toString("base64"));
   });
 
-  it("returns a setup error when image OCR is requested while the mock provider is active", async () => {
+  it("returns clearly labelled static OCR content while the mock provider is active", async () => {
     process.env.LLM_PROVIDER = "mock";
     const file = new File([pngSignature], "network.png", { type: "image/png" });
-    await expect(extractFile(file)).rejects.toMatchObject({ status: 503, code: "VISION_PROVIDER_REQUIRED" });
+    const extracted = await extractFile(file);
+    expect(extracted.text).toContain("mô phỏng");
+    expect(extracted.text).toMatch(/```mermaid|\$\$|\| --- \|/);
+    expect(extracted.metadata?.ocrWarnings).toEqual(expect.arrayContaining([expect.stringContaining("Chế độ mô phỏng")]));
   });
 
   it("rejects files whose extension does not match their binary signature", async () => {

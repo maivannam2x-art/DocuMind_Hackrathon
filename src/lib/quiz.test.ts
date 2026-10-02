@@ -11,7 +11,7 @@ describe("quiz generation response normalization", () => {
   it("drops incomplete LLM questions and can build a source-grounded fallback", () => {
     expect(normalizeQuizCandidates([{ prompt: "A prompt without options" }], "chunk-1")).toEqual([]);
     const fallback = createSourceGroundedFallback("TCP establishes a reliable connection using a three-way handshake before transmitting application data.", "chunk-1");
-    expect(fallback[0]).toMatchObject({ questionType: "true_false", answerIndex: 0, chunkId: "chunk-1" });
-    expect(fallback[0].options).toHaveLength(2);
+    expect(fallback[0]).toMatchObject({ questionType: "true_false", chunkId: "chunk-1" });
+    expect(fallback[0].options).toEqual(["Đúng", "Sai"]);
   });
 });

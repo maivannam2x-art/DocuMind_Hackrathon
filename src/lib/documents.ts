@@ -1,7 +1,8 @@
 import pdfParse from "pdf-parse";
 import { ApiError } from "@/lib/http";
 import { envInt } from "@/lib/db";
-import { prepareDocx, preparePdf, processExtractionUnit, serializeSourceBlocks, type ExtractionProgress, type ExtractionUnit } from "@/lib/ordered-extraction";
+import { MOCK_OCR_NOTICE } from "@/lib/mock-llm";
+import { prepareDocx, preparePdf, processExtractionUnit, recognizeSource, serializeSourceBlocks, type ExtractionProgress, type ExtractionUnit } from "@/lib/ordered-extraction";
 
 export type ExtractedFile = { text: string; mimeType: string; byteSize: number; name: string; metadata?: Record<string, unknown> };
 
@@ -39,6 +40,10 @@ export function mimeTypeForFilename(name: string) {
   return MIME_BY_EXT[name.split(".").pop()?.toLowerCase() ?? ""] ?? null;
 }
 
+function isMockProvider() {
+  return (process.env.LLM_PROVIDER ?? "mock").toLowerCase() === "mock";
+}
+
 function verifyFileSignature(extension: string, buffer: Buffer) {
   const isPng = buffer.length >= 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
   const isJpeg = buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
@@ -62,9 +67,13 @@ export async function extractFileStep(file: File, checkpoint?: ExtractionProgres
   try {
     // Deterministic tests/demo can still read a text-only PDF. Production Gemini
     // reads every page, including pages that also have a complete text layer.
-    if (extension === "pdf" && (process.env.LLM_PROVIDER ?? "mock") === "mock") {
-      const text = normalizeText((await pdfParse(new Uint8Array(buffer) as Buffer)).text);
-      if (text.length < 40) throw new ApiError(503, "VISION_PROVIDER_REQUIRED", "PDF scan cần cấu hình Gemini để đọc hình và chữ.");
+    if (extension === "pdf" && isMockProvider()) {
+      const text = normalizeText(joinPdfHyphenation((await pdfParse(new Uint8Array(buffer) as Buffer)).text));
+      if (text.length < 40) {
+        // Scanned PDF without a text layer: use the static OCR sample so the review flow stays usable.
+        const scanned = normalizeText(serializeSourceBlocks(await recognizeSource({ name })));
+        return { name, mimeType, byteSize: file.size, text: scanned, complete: true, metadata: { extraction: "pdf_scan_mock", ocrWarnings: [MOCK_OCR_NOTICE] } };
+      }
       return { name, mimeType, byteSize: file.size, text, complete: true, metadata: { extraction: "pdf_text_demo", ocrWarnings: ["Chế độ demo chỉ đọc lớp chữ của PDF; hình cần Gemini."] } };
     }
     if (extension !== "pdf" && extension !== "docx" && !mimeType.startsWith("image/")) return {
@@ -84,6 +93,7 @@ export async function extractFileStep(file: File, checkpoint?: ExtractionProgres
       if (unit.kind !== "text" && modelCalls >= 1) break;
       const blocks = await processExtractionUnit(unit, name, prepared?.pdf);
       if (unit.kind !== "text") modelCalls++;
+      if (unit.kind !== "text" && isMockProvider() && !state.warnings.includes(MOCK_OCR_NOTICE)) state.warnings.push(MOCK_OCR_NOTICE);
       state.skippedIllustrations += blocks.filter(block => block.kind === "illustration").length;
       state.visualBlocks += blocks.filter(block => ["latex", "mermaid", "description"].includes(block.kind)).length;
       if (blocks.some(block => block.kind === "description")) state.warnings.push(`Đơn vị ${state.nextUnit + 1}: một sơ đồ/công thức chỉ có mô tả; cần đối chiếu nguồn.`);
@@ -113,11 +123,26 @@ export async function extractFile(file: File): Promise<ExtractedFile> {
 
 export function normalizeText(value: string) {
   return value
+    // PDF text layers often carry decomposed Vietnamese (NFD); compose so search,
+    // keyword matching and fonts treat "ạ" as one character.
+    .normalize("NFC")
     .replace(/\r\n?/g, "\n")
+    .replace(/[\uFEFF\u200B-\u200D\u2060\u00AD]/g, "")
+    .replace(/[\u00A0\u2007\u202F]/g, " ")
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, " ")
-    .replace(/[ \t]+/g, " ")
+    // Keep leading indentation (Python/YAML/code blocks); collapse runs elsewhere.
+    .split("\n").map(line => {
+      const indent = /^[ \t]*/.exec(line)![0];
+      return indent.replace(/\t/g, "    ") + line.slice(indent.length).replace(/[ \t]+/g, " ").trimEnd();
+    }).join("\n")
     .replace(/\n{3,}/g, "\n\n")
-    .trim();
+    .replace(/^\s+/, "")
+    .trimEnd();
+}
+
+/** Joins words split by a hyphen at a PDF line break ("infor-\nmation" → "information"). */
+export function joinPdfHyphenation(value: string) {
+  return value.replace(/([a-zà-ỹ])-\n([a-zà-ỹ])/g, "$1$2");
 }
 
 export type TextChunk = { chunkIndex: number; title: string; content: string; charStart: number; charEnd: number };

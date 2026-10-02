@@ -32,6 +32,11 @@ export function sourceContentBlocks(text: string, headings: string[] = []): Arra
       const rows = lines.slice(i, end + 1).map(row => row.trim().replace(/^\||\|$/g, "").split("|").map(cell => cell.trim()));
       if (rows.length > 1) { flush(); const headers = rows.shift()!; if (rows[0].every(cell => /^:?-+:?$/.test(cell))) rows.shift(); blocks.push({ type: "table", contentType: "table", content: { headers, rows } }); i = end; continue; }
     }
+    if (/^(?:[-*•+]|\d{1,3}[.)])\s+\S/.test(trimmed) && !paragraph.length) {
+      // A run of bullet/numbered lines reads better as a list than as one paragraph.
+      let end = i; while (end + 1 < lines.length && /^(?:[-*•+]|\d{1,3}[.)])\s+\S/.test(lines[end + 1].trim())) end++;
+      if (end > i) { blocks.push({ type: "list", content: lines.slice(i, end + 1).map(item => item.trim().replace(/^(?:[-*•+]|\d{1,3}[.)])\s+/, "")) }); i = end; continue; }
+    }
     if (!trimmed) flush(); else paragraph.push(line);
   }
   flush(); return blocks;

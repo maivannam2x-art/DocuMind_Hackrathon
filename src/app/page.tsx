@@ -6,7 +6,9 @@ import type { User } from "@supabase/supabase-js";
 import { ResultBlockView } from "@/components/result-block";
 import { ExtractedDocument } from "@/components/extracted-document";
 import { AuthDialog } from "@/components/auth-dialog";
-import type { ResultBlock } from "@/lib/result-content";
+import { QuizPanel, type QuizQuestion, type QuizSubmission } from "@/components/quiz-panel";
+import { ChatPanel, type ChatMessage } from "@/components/chat-panel";
+import { DetailView, type Section } from "@/components/detail-view";
 import { fallbackOverview, validatedOverview, type Overview } from "@/lib/overview";
 import { getSupabaseAccessToken, getSupabaseBrowserClient, hasSupabaseBrowserConfig } from "@/lib/supabase-browser";
 
@@ -17,15 +19,13 @@ type InputReport = { id: string; name: string; characters: number; words: number
 type ValidationReport = { valid: boolean; totalCharacters: number; totalWords: number; inputCount: number; chunkCount: number; blockingErrors: Array<{ message: string }>; warnings: Array<{ message: string }>; notes: Array<{ message: string }>; inputs: InputReport[] };
 type Analysis = { id: string; title: string; status: string; user_id?: string | null; confirmed_at?: string | null; topic_id?: string | null; specialization_id?: string | null; custom_prompt?: string | null; quiz_enabled?: boolean; validation_report?: ValidationReport; created_at?: string; updated_at?: string; completed_at?: string | null; error_code?: string | null; error_message?: string | null };
 type HistoryRow = Pick<Analysis, "id" | "title" | "status" | "quiz_enabled" | "created_at" | "updated_at" | "completed_at" | "error_code">;
-type Block = ResultBlock;
-type Section = { title: string; summary?: string; blocks: Block[] };
 type ResultJson = { title?: string; summary?: string; conclusion?: string; overview?: Overview; sections: Section[]; metadata?: Record<string, unknown> };
-type ChatMessage = { id?: string; role: "user" | "assistant"; content: string; citations?: string[] };
-type QuizQuestion = { id: string; prompt: string; options: string[]; difficulty?: string; question_type?: string };
-type QuizFeedback = { questionId: string; correct: boolean; answer: unknown; explanation: string | null };
 type SignedUpload = { inputId: string; name: string; signedUrl: string; mimeType: string; file: File };
 
 const steps = ["Tài liệu", "Kiểm tra", "Xử lý", "Kết quả"];
+const ACCEPTED_EXTENSIONS = ["pdf", "docx", "txt", "md", "markdown", "json", "js", "jsx", "ts", "tsx", "py", "java", "sql", "html", "css", "xml", "yaml", "yml", "sh", "go", "rs", "c", "cpp", "h", "png", "jpg", "jpeg"];
+const MAX_FILE_BYTES = 20 * 1024 * 1024;
+const HISTORY_FILTERS = [{ id: "all", label: "Tất cả" }, { id: "completed", label: "Hoàn thành" }, { id: "active", label: "Đang dở" }, { id: "failed", label: "Bị gián đoạn" }];
 
 function OutlineTree({ items, depth = 0 }: { items: OutlineItem[]; depth?: number }) {
   return <div className={`outline-level outline-depth-${Math.min(depth, 3)}`}>{items.map((item, index) =>
@@ -35,10 +35,6 @@ function OutlineTree({ items, depth = 0 }: { items: OutlineItem[]; depth?: numbe
     </details>)}</div>;
 }
 
-function DetailSection({ section, index, analysisId, resultId }: { section: Section; index: number; analysisId?: string; resultId?: string }) {
-  const [opened, setOpened] = useState(false);
-  return <article className="panel detail-section"><div className="detail-title"><span>{String(index + 1).padStart(2, "0")}</span><div><h2>{section.title}</h2>{section.summary && <p>{section.summary}</p>}</div></div><button type="button" className="button button-secondary section-toggle" onClick={() => setOpened(value => !value)} aria-expanded={opened}>{opened ? "Thu gọn nội dung" : `Xem nội dung · ${section.blocks.length} khối`}</button>{opened && section.blocks.map((block, blockIndex) => <ResultBlockView block={block} analysisId={analysisId} resultId={resultId} key={`${block.type}-${blockIndex}`} />)}</article>;
-}
 const GUEST_ANALYSIS_STORAGE_KEY = "documind:guest-analysis-ids";
 const guestAnalysisIds = new Set<string>();
 
@@ -83,6 +79,32 @@ function formatDate(value?: string | null) {
   return new Intl.DateTimeFormat("vi-VN", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).format(new Date(value));
 }
 
+const DEPTH_LABELS: Record<string, string> = { quick: "nhanh", standard: "tiêu chuẩn", deep: "chuyên sâu" };
+
+/** Builds the stored custom_prompt string; the format is read back by parseCustomPrompt. */
+function composeCustomPrompt(depth: string, specializationName: string | undefined, custom: string) {
+  return [`Mức phân tích: ${DEPTH_LABELS[depth] ?? DEPTH_LABELS.standard}.`, specializationName ? `Chuyên ngành IT đã chọn: ${specializationName}.` : "", custom.trim()].filter(Boolean).join(" ");
+}
+
+function parseCustomPrompt(value?: string | null) {
+  let rest = value?.trim() ?? "";
+  let depth = "standard";
+  const depthMatch = /^Mức phân tích: ([^.]+)\.\s*/.exec(rest);
+  if (depthMatch) {
+    depth = Object.entries(DEPTH_LABELS).find(([, label]) => label === depthMatch[1])?.[0] ?? "standard";
+    rest = rest.slice(depthMatch[0].length);
+  }
+  rest = rest.replace(/^Chuyên ngành IT đã chọn: [^.]+\.\s*/, "");
+  return { depth, custom: rest };
+}
+
+function matchesHistoryFilter(status: string, filter: string) {
+  if (filter === "completed") return status === "completed";
+  if (filter === "failed") return status === "failed" || status === "expired";
+  if (filter === "active") return ["draft", "needs_review", "ready", "processing"].includes(status);
+  return true;
+}
+
 function statusLabel(status: string) {
   const labels: Record<string, string> = { draft: "Bản nháp", needs_review: "Cần kiểm tra", ready: "Sẵn sàng xử lý", processing: "Đang xử lý", completed: "Hoàn thành", failed: "Bị gián đoạn", expired: "Đã hết hạn" };
   return labels[status] ?? status;
@@ -113,16 +135,16 @@ export default function Home() {
   const [resultId, setResultId] = useState<string | null>(null);
   const [activeResultTab, setActiveResultTab] = useState("overview");
   const [summaryVisible, setSummaryVisible] = useState(20);
-  const [detailVisible, setDetailVisible] = useState(8);
   const [conclusionVisible, setConclusionVisible] = useState(20);
   const [quizQuestions, setQuizQuestions] = useState<QuizQuestion[]>([]);
   const [quizLoadError, setQuizLoadError] = useState("");
   const [chatLoadError, setChatLoadError] = useState("");
-  const [quizAnswers, setQuizAnswers] = useState<Record<string, number>>({});
-  const [quizFeedback, setQuizFeedback] = useState<QuizFeedback[] | null>(null);
-  const [quizScore, setQuizScore] = useState<{ correctAnswers: number; attempt: { score: number; total_questions: number } } | null>(null);
+  const [quizReloading, setQuizReloading] = useState(false);
   const [chat, setChat] = useState<ChatMessage[]>([]);
-  const [chatInput, setChatInput] = useState("");
+  const [chatPending, setChatPending] = useState(false);
+  const [progress, setProgress] = useState<{ completed: number; total: number } | null>(null);
+  const [historyQuery, setHistoryQuery] = useState("");
+  const [historyFilter, setHistoryFilter] = useState("all");
   const [busy, setBusy] = useState(false);
   const [loadingLabel, setLoadingLabel] = useState("");
   const [error, setError] = useState("");
@@ -140,7 +162,17 @@ export default function Home() {
     const stored = result?.summary?.trim() ?? "";
     return stored.length >= 30 && stored.length <= 480 ? stored : resultOverview?.lead ?? "Tóm tắt đang được tạo từ nội dung bên dưới.";
   }, [result, resultOverview]);
+  const visibleHistory = useMemo(() => {
+    const needle = historyQuery.trim().toLocaleLowerCase("vi");
+    return history.filter(item => matchesHistoryFilter(item.status, historyFilter) && (!needle || item.title.toLocaleLowerCase("vi").includes(needle)));
+  }, [history, historyQuery, historyFilter]);
   const resultConclusion = useMemo(() => (result?.conclusion?.trim() || resultSummary).slice(0, 900), [result, resultSummary]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(""), 6000);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
 
   useEffect(() => {
     api<{ data: Topic[] }>("/api/topics").then(response => setTopics(response.data ?? [])).catch(() => undefined);
@@ -202,7 +234,7 @@ export default function Home() {
     setAnalysis(current);
     setResultId(resultResponse.result.id);
     setResult(resultResponse.result.result_json);
-    setSummaryVisible(20); setDetailVisible(8); setConclusionVisible(20);
+    setSummaryVisible(20); setConclusionVisible(20);
     setScreen("result");
     setActiveResultTab("overview");
     const [quizResult, chatResult] = await Promise.allSettled([
@@ -293,8 +325,7 @@ export default function Home() {
     setBusy(true); setError(""); setToast(""); setLoadingLabel("Đang lưu tài liệu và chuẩn bị kiểm tra...");
     try {
       const titleValue = title.trim() || files[0]?.name.replace(/\.[^.]+$/, "") || "Phân tích mới";
-      const depthLabel = depth === "quick" ? "nhanh" : depth === "deep" ? "chuyên sâu" : "tiêu chuẩn";
-      const prompt = [`Mức phân tích: ${depthLabel}.`, selectedSpecialization ? `Chuyên ngành IT đã chọn: ${selectedSpecialization.name}.` : "", customPrompt.trim()].filter(Boolean).join(" ");
+      const prompt = composeCustomPrompt(depth, selectedSpecialization?.name, customPrompt);
       const created = await api<{ analysis: Analysis; uploads: Array<Omit<SignedUpload, "file">> }>("/api/analyses", {
         method: "POST",
         body: JSON.stringify({
@@ -324,7 +355,7 @@ export default function Home() {
   }
 
   async function persistReviewChanges(id: string) {
-    const custom = [`Mức phân tích: ${depth === "quick" ? "nhanh" : depth === "deep" ? "chuyên sâu" : "tiêu chuẩn"}.`, selectedSpecialization ? `Chuyên ngành IT đã chọn: ${selectedSpecialization.name}.` : "", customPrompt.trim()].filter(Boolean).join(" ");
+    const custom = composeCustomPrompt(depth, selectedSpecialization?.name, customPrompt);
     await api(`/api/analyses/${id}/review`, {
       method: "PATCH",
       body: JSON.stringify({
@@ -351,8 +382,9 @@ export default function Home() {
 
   async function confirmAndRun() {
     if (!analysisId) return;
-    setBusy(true); setError(""); setToast(""); setScreen("processing");
-    const retrying = ["failed", "processing"].includes(analysis?.status ?? "") && Boolean(analysis?.confirmed_at);
+    setBusy(true); setError(""); setToast(""); setScreen("processing"); setProgress(null);
+    // A confirmed session (ready/failed/processing) resumes at /run; review and confirm would return 409.
+    const retrying = ["ready", "failed", "processing"].includes(analysis?.status ?? "") && Boolean(analysis?.confirmed_at);
     setLoadingLabel(retrying ? "Đang thử xử lý lại phiên đã xác nhận..." : "Đang xác nhận tài liệu...");
     try {
       if (!retrying) {
@@ -367,10 +399,12 @@ export default function Home() {
         completed = await api<typeof completed>(`/api/analyses/${analysisId}/run`, { method: "POST" });
         if (completed.status === "processing") {
           setAnalysis(current => current ? { ...current, status: "processing" } : current);
+          if (completed.totalChunks) setProgress({ completed: completed.completedChunks ?? 0, total: completed.totalChunks });
           setLoadingLabel(`Đã xử lý ${completed.completedChunks ?? 0}/${completed.totalChunks ?? "?"} phần · đang tiếp tục...`);
           if (completed.waitMs) await new Promise(resolve => setTimeout(resolve, completed.waitMs));
         }
       } while (completed.status === "processing");
+      setProgress(current => current ? { ...current, completed: current.total } : current);
       await loadResult(analysisId, { ...(analysis ?? { id: analysisId, title, status: "completed" }), status: "completed" });
       setToast("Phân tích đã hoàn tất. Kết quả được lưu trong workspace của phiên này.");
     } catch (cause) {
@@ -390,6 +424,12 @@ export default function Home() {
     try {
       const details = await api<{ analysis: Analysis; inputs: ApiInput[]; result: { id: string; result_json: ResultJson } | null }>(`/api/analyses/${item.id}?includeContent=true`);
       setAnalysis(details.analysis); setInputRows(details.inputs);
+      // Restore the session's own settings so saving the review does not overwrite them with defaults.
+      const savedPrompt = parseCustomPrompt(details.analysis.custom_prompt);
+      setDepth(savedPrompt.depth); setCustomPrompt(savedPrompt.custom);
+      setQuizEnabled(details.analysis.quiz_enabled ?? true);
+      setTopicMode(details.analysis.topic_id ? "IT" : "AUTO");
+      setSpecializationId(details.analysis.specialization_id ?? "");
       setInputTexts(Object.fromEntries(details.inputs.map(input => [input.id, input.edited_text ?? input.normalized_text ?? input.original_text ?? ""])));
       setReport(details.analysis.validation_report ?? null);
       if (item.status === "completed") await loadResult(item.id, details.analysis);
@@ -405,65 +445,55 @@ export default function Home() {
         setLoadingLabel("Phiên đã xác nhận nhưng bị gián đoạn. Bạn có thể thử xử lý lại.");
       } else {
         setScreen("processing");
-        setLoadingLabel(item.status === "processing" ? "Phiên đang xử lý dở. Tiếp tục để hoàn thành các phần còn lại." : statusLabel(item.status));
+        setLoadingLabel(item.status === "processing" ? "Phiên đang xử lý dở. Tiếp tục để hoàn thành các phần còn lại." : item.status === "ready" ? "Phiên đã được xác nhận nhưng chưa bắt đầu xử lý." : statusLabel(item.status));
       }
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Không mở được phiên phân tích."); }
     finally { setBusy(false); }
   }
 
-  async function submitQuiz() {
-    if (!analysisId) return;
-    setBusy(true); setError("");
+  async function submitQuiz(answers: Record<string, number>): Promise<QuizSubmission | null> {
+    if (!analysisId) return null;
+    setError("");
     try {
-      const response = await api<{ attempt: { score: number; total_questions: number }; correctAnswers: number; feedback: QuizFeedback[] }>(`/api/analyses/${analysisId}/quiz/attempts`, { method: "POST", body: JSON.stringify({ answers: quizAnswers }) });
-      setQuizScore({ correctAnswers: response.correctAnswers, attempt: response.attempt }); setQuizFeedback(response.feedback);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "Không gửi được bài quiz."); }
-    finally { setBusy(false); }
+      return await api<QuizSubmission>(`/api/analyses/${analysisId}/quiz/attempts`, { method: "POST", body: JSON.stringify({ answers }) });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Không gửi được bài quiz.");
+      return null;
+    }
   }
 
-  async function sendChat(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const message = chatInput.trim();
-    if (!analysisId || !message) return;
-    setChat(current => [...current, { role: "user", content: message }]); setChatInput(""); setBusy(true); setError("");
+  async function sendChat(message: string) {
+    if (!analysisId) return false;
+    setChat(current => [...current, { role: "user", content: message }]); setChatPending(true); setError("");
     try {
       const response = await api<{ assistantMessage: ChatMessage }>(`/api/analyses/${analysisId}/chat`, { method: "POST", body: JSON.stringify({ message }) });
       setChat(current => [...current, response.assistantMessage]);
+      return true;
     } catch (cause) {
-      setChat(current => current.slice(0, -1)); setChatInput(message);
+      setChat(current => current.slice(0, -1));
       setError(cause instanceof Error ? cause.message : "Không gửi được câu hỏi.");
-    } finally { setBusy(false); }
+      return false;
+    } finally { setChatPending(false); }
   }
 
   async function reloadQuiz() {
     if (!analysisId) return;
-    setBusy(true); setQuizLoadError("");
+    setQuizReloading(true); setQuizLoadError("");
     try {
       const response = await api<{ quiz: { id: string }; questions: QuizQuestion[] }>(`/api/analyses/${analysisId}/quiz`, { method: "POST" });
       setQuizQuestions(response.questions ?? []);
       if (!response.questions?.length) setQuizLoadError("Quiz chưa có câu hỏi. Hãy chạy lại phân tích sau khi hệ thống cập nhật.");
     } catch (cause) { setQuizLoadError(cause instanceof Error ? cause.message : "Không tải được quiz."); }
-    finally { setBusy(false); }
+    finally { setQuizReloading(false); }
   }
 
   async function reloadChat() {
     if (!analysisId) return;
-    setBusy(true); setChatLoadError("");
+    setChatLoadError("");
     try {
       const response = await api<{ messages: ChatMessage[] }>(`/api/analyses/${analysisId}/chat`);
       setChat(response.messages ?? []);
     } catch (cause) { setChatLoadError(cause instanceof Error ? cause.message : "Không tải được chatbot."); }
-    finally { setBusy(false); }
-  }
-
-  function renderChatPanel(className = "panel chat-panel") {
-    return <section className={className}>
-      <div className="chat-heading"><span className="chat-spark">✦</span><div><h3>Hỏi đáp cùng AI</h3><small>Dựa trên tài liệu đã phân tích</small></div><button title="Tải lại hội thoại" onClick={() => void reloadChat()}>↻</button></div>
-      {chatLoadError && <div className="inline-error" role="alert">{chatLoadError}<button onClick={() => void reloadChat()}>Thử lại</button></div>}
-      <div className="chat-messages">{chat.length === 0 ? <div className="chat-welcome"><span className="ai-avatar">✦</span><p>Chào bạn! Mình đã đọc tài liệu này. Bạn có thể hỏi về bất kỳ phần nào trong nội dung.</p><button onClick={() => setChatInput("Tóm tắt những ý quan trọng nhất trong tài liệu")}>Tóm tắt ý quan trọng nhất <span>↗</span></button><button onClick={() => setChatInput("Giải thích thuật ngữ quan trọng nhất trong tài liệu")}>Giải thích thuật ngữ quan trọng <span>↗</span></button></div> : chat.map((message, index) => <div className={`chat-message ${message.role}`} key={message.id ?? index}><div className="chat-role">{message.role === "user" ? "Bạn" : "AI · Dựa trên tài liệu"}</div><p>{message.content}</p>{message.citations?.length ? <small>Nguồn: {message.citations.join(", ")}</small> : null}</div>)}</div>
-      <form className="chat-form" onSubmit={event => void sendChat(event)}><textarea value={chatInput} onChange={event => setChatInput(event.target.value)} maxLength={4000} rows={2} placeholder="Hỏi tiếp về tài liệu..." /><button type="submit" disabled={busy || !chatInput.trim()} aria-label="Gửi câu hỏi">↑</button></form>
-      <div className="chat-disclaimer">AI có thể sai. Hãy kiểm tra nội dung với tài liệu gốc.</div>
-    </section>;
   }
 
   async function exportResult(format: "pdf" | "docx" | "markdown" | "html" | "json") {
@@ -501,11 +531,15 @@ export default function Home() {
   }
 
   function addFiles(accepted: File[]) {
-    const tooLarge = accepted.filter(file => file.size > 20 * 1024 * 1024);
+    // Dropped files bypass the input's accept attribute, so check extensions here too.
+    const unsupported = accepted.find(file => !ACCEPTED_EXTENSIONS.includes(file.name.split(".").pop()?.toLowerCase() ?? ""));
     const empty = accepted.find(file => file.size === 0);
-    const valid = accepted.filter(file => file.size > 0 && file.size <= 20 * 1024 * 1024);
-    if (empty) setError(`Tệp “${empty.name}” không có dữ liệu. Hãy chọn lại tệp gốc từ thiết bị.`);
-    else if (tooLarge.length) setError(`Tệp “${tooLarge[0].name}” vượt giới hạn 20 MB.`);
+    const tooLarge = accepted.find(file => file.size > MAX_FILE_BYTES);
+    const known = new Set(files.map(file => `${file.name}:${file.size}:${file.lastModified}`));
+    const valid = accepted.filter(file => file !== unsupported && file.size > 0 && file.size <= MAX_FILE_BYTES && ACCEPTED_EXTENSIONS.includes(file.name.split(".").pop()?.toLowerCase() ?? "") && !known.has(`${file.name}:${file.size}:${file.lastModified}`));
+    if (unsupported) setError(`Tệp “${unsupported.name}” chưa được hỗ trợ. Hãy dùng PDF, DOCX, văn bản/mã nguồn hoặc PNG/JPG.`);
+    else if (empty) setError(`Tệp “${empty.name}” không có dữ liệu. Hãy chọn lại tệp gốc từ thiết bị.`);
+    else if (tooLarge) setError(`Tệp “${tooLarge.name}” vượt giới hạn 20 MB.`);
     else if (files.length + valid.length > 10) setError("Mỗi phân tích chỉ nhận tối đa 10 tệp. Hãy bỏ bớt tệp rồi thử lại.");
     else setError("");
     setFiles(current => [...current, ...valid].slice(0, 10));
@@ -621,9 +655,15 @@ export default function Home() {
             </aside>
           </div>}
 
-          {screen === "processing" && <div className="processing-wrap"><div className="panel processing-card"><div className="processing-illustration"><span className="orbit orbit-a" /><span className="orbit orbit-b" /><span className="processing-core">✦</span><span className="spark spark-a">✧</span><span className="spark spark-b">✦</span></div><div className="panel-kicker">DOCUMIND ĐANG LÀM VIỆC</div><h2>{loadingLabel || "Đang xử lý phiên của bạn"}</h2><p>{analysis?.title || title || "Tài liệu học tập"}</p><div className="processing-progress"><i /></div><div className="processing-status"><span><i />Đang phân tích nội dung</span><small>Bạn có thể mở lại phiên từ Lịch sử để tiếp tục.</small></div><div className="processing-points"><span>✓ Tài liệu đã được xác nhận</span><span>✦ Kết quả sẽ được lưu vào workspace</span></div>{["failed", "processing"].includes(analysis?.status ?? "") && !busy && <button className="button button-primary" onClick={() => void confirmAndRun()}>{analysis?.status === "failed" ? "Thử xử lý lại" : "Tiếp tục xử lý"} <span>→</span></button>}</div></div>}
+          {screen === "processing" && <div className="processing-wrap"><div className="panel processing-card"><div className="processing-illustration"><span className="orbit orbit-a" /><span className="orbit orbit-b" /><span className="processing-core">✦</span><span className="spark spark-a">✧</span><span className="spark spark-b">✦</span></div><div className="panel-kicker">DOCUMIND ĐANG LÀM VIỆC</div><h2>{loadingLabel || "Đang xử lý phiên của bạn"}</h2><p>{analysis?.title || title || "Tài liệu học tập"}</p>
+            <div className={`processing-progress ${progress ? "is-determinate" : ""}`} role="progressbar" aria-valuemin={0} aria-valuemax={progress?.total ?? 100} aria-valuenow={progress?.completed} aria-label="Tiến độ phân tích"><i style={progress ? { width: `${Math.max(4, progress.completed / progress.total * 100)}%` } : undefined} /></div>
+            <div className="processing-status"><span><i />{progress ? `${progress.completed}/${progress.total} phần · ${Math.round(progress.completed / progress.total * 100)}%` : busy ? "Đang phân tích nội dung" : "Đang chờ tiếp tục"}</span><small>Bạn có thể đóng trang và mở lại phiên từ Lịch sử để tiếp tục.</small></div>
+            <ol className="processing-steps">{[{ label: "Xác nhận tài liệu", done: Boolean(analysis?.confirmed_at) || Boolean(progress) }, { label: "Nhận diện chủ đề", done: Boolean(progress) }, { label: progress ? `Phân tích ${progress.total} phần nội dung` : "Phân tích từng phần nội dung", done: Boolean(progress && progress.completed >= progress.total) }, { label: analysis?.quiz_enabled ? "Tổng hợp kết quả và tạo quiz" : "Tổng hợp kết quả", done: false }].map((step, index, all) => { const current = !step.done && all.slice(0, index).every(item => item.done); return <li key={step.label} className={step.done ? "done" : current && busy ? "current" : ""}><span>{step.done ? "✓" : index + 1}</span>{step.label}</li>; })}</ol>
+            {["ready", "failed", "processing"].includes(analysis?.status ?? "") && Boolean(analysis?.confirmed_at) && !busy && <button className="button button-primary" onClick={() => void confirmAndRun()}>{analysis?.status === "failed" ? "Thử xử lý lại" : analysis?.status === "ready" ? "Bắt đầu xử lý" : "Tiếp tục xử lý"} <span>→</span></button>}</div></div>}
 
-          {screen === "history" && <section className="history-list panel"><div className="panel-heading"><div><div className="panel-kicker">WORKSPACE CÁ NHÂN</div><h2>Các phiên gần đây</h2><p>Mở lại phiên để xem kết quả hoặc tiếp tục chỉnh sửa.</p></div><button className="button button-primary" onClick={() => setScreen("input")}>＋ Phân tích mới</button></div>{history.length === 0 ? <div className="empty-state"><span>▤</span><h3>Chưa có phiên phân tích</h3><p>Tài liệu bạn xử lý sẽ được lưu tại đây.</p><button className="button button-primary" onClick={() => setScreen("input")}>Bắt đầu phân tích <span>→</span></button></div> : history.map(item => <button className="history-row" key={item.id} onClick={() => void openHistoryItem(item)}><span className={`history-file ${item.status === "completed" ? "complete" : ""}`}>{item.status === "completed" ? "✓" : "▤"}</span><span className="history-main"><strong>{item.title}</strong><small>{item.quiz_enabled ? "Có quiz" : "Không có quiz"} · {formatDate(item.updated_at || item.created_at)}</small></span><span className={`status-pill ${item.status === "completed" ? "status-ok" : item.status === "failed" ? "status-error" : "status-warn"}`}>{statusLabel(item.status)}</span><span className="history-open">Mở phiên →</span></button>)}</section>}
+          {screen === "history" && <section className="history-list panel"><div className="panel-heading"><div><div className="panel-kicker">WORKSPACE CÁ NHÂN</div><h2>Các phiên gần đây</h2><p>Mở lại phiên để xem kết quả hoặc tiếp tục chỉnh sửa.</p></div><button className="button button-primary" onClick={() => setScreen("input")}>＋ Phân tích mới</button></div>
+            {history.length > 0 && <div className="history-toolbar"><label className="detail-search"><span aria-hidden="true">⌕</span><input type="search" value={historyQuery} onChange={event => setHistoryQuery(event.target.value)} placeholder="Tìm theo tên phiên..." aria-label="Tìm phiên phân tích" /></label><div className="history-filters" role="group" aria-label="Lọc theo trạng thái">{HISTORY_FILTERS.map(filter => <button key={filter.id} className={`chip ${historyFilter === filter.id ? "chip-active" : ""}`} onClick={() => setHistoryFilter(filter.id)}>{filter.label} <b>{history.filter(item => matchesHistoryFilter(item.status, filter.id)).length}</b></button>)}</div></div>}
+            {history.length === 0 ? <div className="empty-state"><span>▤</span><h3>Chưa có phiên phân tích</h3><p>Tài liệu bạn xử lý sẽ được lưu tại đây.</p><button className="button button-primary" onClick={() => setScreen("input")}>Bắt đầu phân tích <span>→</span></button></div> : visibleHistory.length === 0 ? <div className="empty-inline">Không có phiên nào khớp bộ lọc hiện tại.</div> : visibleHistory.map(item => <button className="history-row" key={item.id} disabled={busy} onClick={() => void openHistoryItem(item)}><span className={`history-file ${item.status === "completed" ? "complete" : ""}`}>{item.status === "completed" ? "✓" : "▤"}</span><span className="history-main"><strong>{item.title}</strong><small>{item.quiz_enabled ? "Có quiz" : "Không có quiz"} · {formatDate(item.updated_at || item.created_at)}</small></span><span className={`status-pill ${item.status === "completed" ? "status-ok" : item.status === "failed" ? "status-error" : "status-warn"}`}>{statusLabel(item.status)}</span><span className="history-open">Mở phiên →</span></button>)}</section>}
 
           {screen === "result" && result && <div className={`results-layout ${["chat", "report"].includes(activeResultTab) ? "single-result" : ""}`}>
             <div className="result-column">
@@ -636,13 +676,13 @@ export default function Home() {
 
               {activeResultTab === "summary" && <article className="panel result-article"><div className="panel-kicker">TÓM TẮT TÀI LIỆU</div><h2>{result.title || analysis?.title || "Tóm tắt"}</h2><p className="summary-copy overview-lead">{resultSummary}</p><h3 className="summary-subheading">Các ý quan trọng</h3><div className="summary-highlights">{resultOverview?.highlights.map((point, index) => <div key={`${point.title}-${index}`}><span>{String(index + 1).padStart(2, "0")}</span><div><strong>{point.title}</strong><p>{point.detail}</p></div></div>)}</div><h3 className="summary-subheading">Tóm tắt theo đề mục</h3><p className="summary-count">Hiển thị {Math.min(summaryVisible, result.sections.length)} / {result.sections.length} mục. Mở Chi tiết để xem đầy đủ bảng, sơ đồ, công thức và nội dung nguồn.</p>{result.sections.slice(0, summaryVisible).map((section, index) => <section className="article-section summary-section" key={`${section.title}-${index}`}><span>{String(index + 1).padStart(2, "0")}</span><div><h3>{section.title}</h3><p>{section.summary?.trim() || "Mục này có nội dung phân tích chi tiết; xem nguồn ở tab Chi tiết."}</p></div></section>)}{summaryVisible < result.sections.length && <button className="button button-secondary load-more" onClick={() => setSummaryVisible(count => count + 20)}>Xem thêm 20 mục →</button>}</article>}
 
-              {activeResultTab === "detail" && <div className="detail-sections">{result.sections.slice(0, detailVisible).map((section, index) => <DetailSection section={section} index={index} analysisId={analysisId ?? undefined} resultId={resultId ?? undefined} key={`${section.title}-${index}`} />)}{detailVisible < result.sections.length && <button className="button button-secondary load-more" onClick={() => setDetailVisible(count => count + 8)}>Xem thêm 8 mục · {result.sections.length - detailVisible} mục còn lại →</button>}</div>}
+              {activeResultTab === "detail" && <DetailView sections={result.sections} analysisId={analysisId ?? undefined} resultId={resultId ?? undefined} />}
 
               {activeResultTab === "conclusion" && <article className="panel conclusion-panel"><div className="conclusion-heading"><span className="conclusion-mark">✓</span><div><div className="panel-kicker">KẾT LUẬN TỔNG HỢP</div><h2>{result.title || analysis?.title || "Điều rút ra từ tài liệu"}</h2></div></div><p className="conclusion-copy">{resultConclusion}</p><div className="conclusion-highlights"><h3>Các điểm đã được phân tích</h3>{result.sections.slice(0, conclusionVisible).map((section, index) => <div className="conclusion-highlight" key={`${section.title}-${index}`}><span>{String(index + 1).padStart(2, "0")}</span><div><strong>{section.title}</strong><p>{section.summary || "Xem nội dung nguồn trong phần Chi tiết."}</p></div></div>)}{conclusionVisible < result.sections.length && <button className="button button-secondary load-more" onClick={() => setConclusionVisible(count => count + 20)}>Xem thêm kết luận →</button>}</div><div className="conclusion-actions"><button className="button button-secondary" onClick={() => setActiveResultTab("detail")}>Quay lại phân tích chi tiết</button>{analysis?.quiz_enabled && <button className="button button-primary" onClick={() => setActiveResultTab("quiz")}>Ôn tập với quiz →</button>}</div></article>}
 
-              {activeResultTab === "quiz" && <article className="panel quiz-panel"><div className="panel-kicker">ÔN TẬP TƯƠNG TÁC</div><h2>Kiểm tra kiến thức</h2><p>Chọn một đáp án cho mỗi câu hỏi. Đáp án sẽ được kiểm tra dựa trên tài liệu.</p>{quizLoadError && <div className="inline-error" role="alert">{quizLoadError}<button onClick={() => void reloadQuiz()}>Tạo hoặc tải lại quiz</button></div>}{quizQuestions.length === 0 ? (analysis?.quiz_enabled ? <div className="empty-state compact-empty"><h3>Quiz chưa sẵn sàng</h3><p>Hệ thống sẽ tạo quiz từ những phần tài liệu đã lưu.</p><button className="button button-secondary" disabled={busy} onClick={() => void reloadQuiz()}>Tạo lại quiz</button></div> : <div className="empty-inline">Phiên này không yêu cầu tạo quiz.</div>) : <>{quizQuestions.map((question, index) => { const feedback = quizFeedback?.find(item => item.questionId === question.id); return <div className="quiz-question" key={question.id}><div className="quiz-q-meta"><span>CÂU {String(index + 1).padStart(2, "0")}</span><small>{question.difficulty === "easy" ? "Cơ bản" : question.difficulty === "hard" ? "Nâng cao" : "Trung bình"}</small></div><h3>{question.prompt}</h3><div className="quiz-options">{question.options.map((option, optionIndex) => <label key={optionIndex} className={`${quizAnswers[question.id] === optionIndex ? "selected" : ""} ${feedback && Number(feedback.answer) === optionIndex ? "right-answer" : ""} ${feedback && quizAnswers[question.id] === optionIndex && !feedback.correct ? "wrong-answer" : ""}`}><input type="radio" name={question.id} checked={quizAnswers[question.id] === optionIndex} disabled={Boolean(quizFeedback)} onChange={() => setQuizAnswers(current => ({ ...current, [question.id]: optionIndex }))} /><span className="option-letter">{String.fromCharCode(65 + optionIndex)}</span><span>{option}</span>{feedback && Number(feedback.answer) === optionIndex && <b>✓</b>}</label>)}</div>{feedback?.explanation && <p className={`quiz-explanation ${feedback.correct ? "" : "incorrect"}`}>{feedback.correct ? "Chính xác." : "Chưa chính xác."} {feedback.explanation}</p>}</div>; })}{quizScore && <div className="score-banner"><strong>{quizScore.correctAnswers}/{quizScore.attempt.total_questions} câu đúng</strong><span>Điểm {quizScore.attempt.score}%</span></div>}<div className="quiz-submit-row">{quizFeedback && <button className="button button-secondary" onClick={() => { setQuizFeedback(null); setQuizScore(null); setQuizAnswers({}); }}>Làm lại quiz</button>}<button className="button button-primary" disabled={busy || Boolean(quizFeedback) || Object.keys(quizAnswers).length !== quizQuestions.length} onClick={() => void submitQuiz()}>{busy ? "Đang kiểm tra..." : "Nộp bài quiz →"}</button></div></>}</article>}
+              {activeResultTab === "quiz" && <QuizPanel key={resultId ?? analysisId ?? "quiz"} questions={quizQuestions} quizEnabled={Boolean(analysis?.quiz_enabled)} loadError={quizLoadError} reloading={quizReloading} onReload={() => void reloadQuiz()} onSubmit={submitQuiz} onOpenDetail={() => setActiveResultTab("detail")} />}
 
-              {activeResultTab === "chat" && renderChatPanel("panel chat-workspace")}
+              {activeResultTab === "chat" && <ChatPanel className="panel chat-workspace" messages={chat} pending={chatPending} loadError={chatLoadError} onSend={sendChat} onReload={() => void reloadChat()} />}
 
               {activeResultTab === "report" && <section className="panel report-workspace">
                 <div className="panel-kicker">BÁO CÁO PHÂN TÍCH</div><h2>Xuất báo cáo</h2><p>Chọn định dạng tải xuống. Bản xem trước dưới đây là nội dung sẽ được đưa vào báo cáo.</p>
