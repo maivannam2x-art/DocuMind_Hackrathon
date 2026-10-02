@@ -2,6 +2,7 @@
 
 import React, { useEffect, useId, useRef, useState } from "react";
 import katex from "katex";
+import { renderMermaid } from "@/lib/mermaid-browser";
 import { getSupabaseAccessToken } from "@/lib/supabase-browser";
 import { scalarText, tableValues, type ResultBlock } from "@/lib/result-content";
 
@@ -14,14 +15,8 @@ function MermaidDiagram({ source, analysisId, resultId, expand = false }: { sour
   useEffect(() => {
     if (!opened || !source.trim() || source.length > 10000) return;
     let current = true;
-    import("mermaid").then(async ({ default: mermaid }) => {
-      mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "neutral", htmlLabels: false, flowchart: { htmlLabels: false }, suppressErrorRendering: true });
-      const parsed = await mermaid.parse(source, { suppressErrors: true });
-      if (!parsed) throw new Error("Invalid Mermaid source");
-      // Mermaid otherwise inserts its giant error diagram into document.body
-      // when a source parses but fails during drawing. Keep its work detached.
-      return mermaid.render(id, source, document.createElement("div"));
-    }).then(({ svg: rendered }) => {
+    setError("");
+    renderMermaid(source, id).then(rendered => {
       if (current) setSvg(rendered);
     }).catch(() => {
       if (current) setError("Không thể dựng sơ đồ tự động. Mã nguồn sơ đồ vẫn được giữ bên dưới.");

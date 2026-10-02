@@ -6,7 +6,7 @@ export function ExtractedDocument({ name, text, previewUrl, metadata, headings, 
   const [editing, setEditing] = useState(false);
   const warnings = Array.isArray(metadata?.ocrWarnings) ? metadata.ocrWarnings : [];
   return <details className="extracted-document">
-    <summary><span aria-hidden="true">▤</span><span><strong>{name}</strong><small>{text.length.toLocaleString("vi-VN")} ký tự · {text.slice(0, 135).replace(/\s+/g, " ")}</small></span><b>Xem nội dung <span aria-hidden="true">⌄</span></b></summary>
+    <summary><span aria-hidden="true">▤</span><span><strong>{name}</strong><small>{text.length.toLocaleString("vi-VN")} ký tự · {text.replace(/```[\s\S]*?```/g, " [Sơ đồ / mã] ").replace(/\$\$[\s\S]*?\$\$/g, " [Công thức] ").replace(/\s+/g, " ").slice(0, 135)}</small></span><b>Xem nội dung <span aria-hidden="true">⌄</span></b></summary>
     <div className="extracted-editor">
       {previewUrl && <img className="source-image-preview" src={previewUrl} alt={`Ảnh gốc: ${name}`} />}
       {metadata?.readingOrderPreserved === true && <p className="extraction-hint">Nội dung được đọc theo thứ tự. Sơ đồ và công thức được đặt tại vị trí tương ứng; hãy đối chiếu với tài liệu gốc.</p>}

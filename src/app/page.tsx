@@ -1,4 +1,5 @@
 "use client";
+import { renderMermaid } from "@/lib/mermaid-browser";
 
 import { ChangeEvent, FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import type { User } from "@supabase/supabase-js";
@@ -481,7 +482,7 @@ export default function Home() {
           for (const [index, source] of diagrams.entries()) {
             try {
               if (source.length > 10000 || !(await mermaid.parse(source, { suppressErrors: true }))) { sourceOnly++; continue; }
-              const { svg } = await mermaid.render(`export-diagram-${Date.now()}-${index}`, source, document.createElement("div"));
+              const svg = await renderMermaid(source, `export-diagram-${Date.now()}-${index}`);
               await api(`/api/analyses/${analysisId}/assets`, {
                 method: "POST", body: JSON.stringify({ resultId, assetType: "mermaid", source, svg, title: "Sơ đồ báo cáo" }),
               });
