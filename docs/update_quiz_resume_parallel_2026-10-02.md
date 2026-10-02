@@ -67,3 +67,10 @@ Bảng lớn chia tại ranh giới hàng, lặp headers ở mỗi chunk; không
 Ảnh kiểm chứng F5 và nhật ký: `docs/screenshots/update-2026-10-02-f5.jpg`.
 
 - Commit sửa checkpoint `a91f438`: CI run `37027790188` đạt 117 unit tests và 16 E2E desktop/mobile; lint/build thành công. Bản chốt tiếp theo chỉnh nhãn tiến độ đọc đầu vào và màn hình chờ khôi phục trước khi auth khởi tạo, kèm báo cáo/ảnh kiểm chứng.
+
+## Bản chốt và kiểm tra UI bổ sung
+
+- Code chốt `8441c25`, Vercel success; GitHub Actions run `37029051255` đạt 117 unit tests, 16 E2E, lint và production build. Sửa thanh tiến độ để giai đoạn đọc đầu vào không đánh dấu đã nhận diện/phân tích; hiển thị chờ khôi phục ngay khi có ID phiên trên URL.
+- Browser thật chọn/tìm Spring từ danh mục 73 ngành, chọn tự nhận diện khi tìm không thấy, nhập 250 vào ô số câu thành công. Phiên bổ sung BFS/tìm kiếm nhị phân chọn Chuyên sâu, yêu cầu 5 câu → quiz 5; Review giữ 2 đề mục I–II, gom thành 1 chunk vì nguồn ngắn. Bảng BFS/DFS hiện thành hàng/cột; Mermaid hiện thành SVG; LaTeX hiện công thức. Asset Mermaid đã lưu ảnh vào Supabase (`storage_path` có giá trị).
+- Bấm xuất PDF từ UI đã tạo bản ghi export `ready` trong database. Công cụ browser bị timeout khi chờ download nên chưa lấy được PDF này để kiểm tra ảnh bằng mắt; không coi riêng bản ghi `ready` là bằng chứng PDF tải xong. Kiểm tra tải 5 định dạng và font/bảng/công thức phía API ở trên đã đạt độc lập.
+- Ảnh UI bổ sung: `docs/screenshots/update-2026-10-02-table-diagram.jpg`. Phiên test là dữ liệu IT tổng hợp, không chứa tài liệu riêng của người dùng.
