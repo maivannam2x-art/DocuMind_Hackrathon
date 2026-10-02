@@ -1,3 +1,5 @@
+import { quizSettingsSchema } from "@/lib/quiz-settings";
+import { sourceContentBlocks } from "@/lib/source-content";
 import { NextRequest } from "next/server";
 import { z } from "zod";
 import { getAnalysis, getIdentity } from "@/lib/auth";
@@ -13,6 +15,7 @@ const reviewSchema = z.object({
   promptTemplateId: z.string().uuid().nullable().optional(),
   customPrompt: z.string().trim().max(3000).nullable().optional(),
   quizEnabled: z.boolean().optional(),
+  quizSettings: quizSettingsSchema.optional(),
   inputs: z.array(z.object({ id: z.string().uuid(), editedText: z.string().max(500000) })).max(10).optional(),
 });
 type Context = { params: Promise<{ id: string }> };
@@ -30,6 +33,7 @@ export async function PATCH(request: NextRequest, context: Context) {
     if (body.customPrompt !== undefined) updates.custom_prompt = body.customPrompt;
     if (body.specializationId !== undefined) updates.specialization_id = body.specializationId;
     if (body.promptTemplateId !== undefined) updates.prompt_template_id = body.promptTemplateId;
+    if (body.quizSettings !== undefined) updates.quiz_settings = body.quizSettings;
     if (body.quizEnabled !== undefined) updates.quiz_enabled = body.quizEnabled;
     if (body.topicCode !== undefined) {
       const topicCode = body.topicCode.toUpperCase();
@@ -64,7 +68,7 @@ export async function PATCH(request: NextRequest, context: Context) {
       for (const input of body.inputs) {
         const value = normalizeText(input.editedText);
         replacements.set(input.id, value);
-        if (value.length < 40) throw new ApiError(422, "INPUT_TOO_SHORT", "Mỗi nội dung sau chỉnh sửa cần ít nhất 40 ký tự.");
+        if (value.length < 40 && !sourceContentBlocks(value).some(block=>["latex","mermaid","plantuml"].includes(block.contentType??""))) throw new ApiError(422, "INPUT_TOO_SHORT", "Mỗi nội dung sau chỉnh sửa cần ít nhất 40 ký tự.");
       }
       for (const input of body.inputs) await db.from("analysis_inputs").update({ edited_text: replacements.get(input.id), status: "valid" }).eq("id", input.id);
       const { data: allInputs } = await db.from("analysis_inputs").select("id,edited_text,normalized_text,original_text").eq("analysis_id", id).order("position");

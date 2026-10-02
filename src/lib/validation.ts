@@ -1,3 +1,5 @@
+import { INPUT_LIMITS } from "@/lib/limits";
+import { quizSettingsSchema } from "@/lib/quiz-settings";
 import { z } from "zod";
 import { ApiError } from "@/lib/http";
 
@@ -12,11 +14,12 @@ export const createAnalysisSchema = z.object({
     if (value === "false" || value === false) return false;
     return value;
   }, z.boolean()).optional(),
-  text: z.string().max(500000).optional(),
+  quizSettings: quizSettingsSchema.optional(),
+  text: z.string().max(INPUT_LIMITS.maxTextCharacters).optional(),
   files: z.array(z.object({
     name: z.string().trim().min(1).max(255),
-    byteSize: z.number().int().positive().max(20 * 1024 * 1024),
-  })).max(10).optional(),
+    byteSize: z.number().int().positive().max(INPUT_LIMITS.maxFileBytes),
+  })).max(INPUT_LIMITS.maxFiles).optional(),
 });
 
 export const resultSchema = z.object({

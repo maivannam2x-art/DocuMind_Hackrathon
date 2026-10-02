@@ -1,3 +1,4 @@
+import { headers } from "next/headers";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import "katex/dist/katex.min.css";
@@ -9,6 +10,7 @@ export const metadata: Metadata = {
   description: "Biến tài liệu thành tri thức có cấu trúc với DocuMind.",
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  await headers(); // Per-request render for the CSP nonce.
   return <html lang="vi"><body>{children}</body></html>;
 }

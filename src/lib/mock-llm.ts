@@ -70,7 +70,7 @@ function mockOcr(request: LlmRequest) {
 function contextPassages(prompt: string) {
   const passages: Array<{ title: string; text: string }> = [];
   let title = "Tổng quan";
-  for (const match of prompt.matchAll(/"(title|summary|content|lead|detail)":"((?:[^"\\]|\\.)*)"/g)) {
+  for (const match of prompt.matchAll(/"(title|summary|content|lead|detail|text)":"((?:[^"\\]|\\.)*)"/g)) {
     let value: string;
     try { value = JSON.parse(`"${match[2]}"`) as string; } catch { continue; }
     if (match[1] === "title") { title = value; continue; }

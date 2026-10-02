@@ -1,0 +1,16 @@
+/* Shared DocuMind palette. */
+:root {
+  --ink: #20233b;
+  --muted: #62677b;
+  --line: #e9eaf1;
+  --paper: #fff;
+  --canvas: #f6f7fb;
+  --purple: #7257e8;
+  --purple-dark: #5e43d1;
+  --purple-soft: #f0edff;
+  --mint: #dff8f0;
+  --green: #138a68;
+  --red: #c74854;
+  --amber: #a56a19;
+  --shadow: 0 12px 34px rgba(34, 39, 76, 0.045);
+}

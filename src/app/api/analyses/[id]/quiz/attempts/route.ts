@@ -38,3 +38,13 @@ export async function POST(request: NextRequest, context: Context) {
     return ok({ attempt, correctAnswers: correct, feedback });
   } catch (error) { return errorResponse(error); }
 }
+
+export async function GET(request:NextRequest, context:Context){
+  try{const identity=await getIdentity(request),{id}=await context.params;await getAnalysis(identity,id);
+    const db=getAdminDb(),{data:quizzes,error:qError}=await db.from('quizzes').select('id').eq('analysis_id',id);
+    if(qError)throw new ApiError(503,'ATTEMPTS_LOAD_FAILED','Không tải được lịch sử quiz.');
+    if(!quizzes?.length)return ok({attempts:[]});
+    const {data,error}=await db.from('quiz_attempts').select('id,score,total_questions,submitted_at').in('quiz_id',quizzes.map(q=>q.id)).match(ownerFilter(identity)).eq('status','submitted').order('submitted_at',{ascending:false}).limit(20);
+    if(error)throw new ApiError(503,'ATTEMPTS_LOAD_FAILED','Không tải được lịch sử quiz.');return ok({attempts:data??[]});
+  }catch(error){return errorResponse(error);}
+}

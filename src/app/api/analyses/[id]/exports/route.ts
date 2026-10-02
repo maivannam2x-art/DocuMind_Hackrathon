@@ -1,3 +1,4 @@
+import { enforceRateLimit } from "@/lib/rate-limit";
 import { NextRequest } from "next/server";
 import { randomUUID } from "node:crypto";
 import sharp from "sharp";
@@ -14,6 +15,7 @@ type Context = { params: Promise<{ id: string }> };
 export async function POST(request: NextRequest, context: Context) {
   try {
     const identity = await getIdentity(request);
+    await enforceRateLimit(request, identity, "export");
     const { id } = await context.params;
     const analysis = await getAnalysis(identity, id);
     if (analysis.status !== "completed") throw new ApiError(409, "RESULT_NOT_READY", "Chỉ xuất được kết quả đã hoàn tất.");

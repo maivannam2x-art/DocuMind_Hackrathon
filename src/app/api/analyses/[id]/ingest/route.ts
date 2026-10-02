@@ -1,3 +1,4 @@
+import { enforceRateLimit } from "@/lib/rate-limit";
 import { NextRequest } from "next/server";
 import { getAnalysis, getIdentity } from "@/lib/auth";
 import { getAdminDb } from "@/lib/db";
@@ -25,6 +26,7 @@ export const maxDuration = 120;
 export async function POST(request: NextRequest, context: Context) {
   try {
     const identity = await getIdentity(request);
+    await enforceRateLimit(request, identity, "ingest");
     const { id } = await context.params;
     const analysis = await getAnalysis(identity, id);
     if (!["draft", "needs_review"].includes(analysis.status)) {

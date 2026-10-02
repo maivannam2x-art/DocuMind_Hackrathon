@@ -1,3 +1,5 @@
+import { quizSettings } from "@/lib/quiz-settings";
+import { enforceRateLimit } from "@/lib/rate-limit";
 import { NextRequest } from "next/server";
 import { getAnalysis, getIdentity } from "@/lib/auth";
 import { getAdminDb } from "@/lib/db";
@@ -29,6 +31,7 @@ export async function GET(request: NextRequest, context: Context) {
 export async function POST(request: NextRequest, context: Context) {
   try {
     const identity = await getIdentity(request);
+    await enforceRateLimit(request, identity, "quiz");
     const { id } = await context.params;
     const analysis = await getAnalysis(identity, id);
     if (analysis.status !== "completed") throw new ApiError(409, "ANALYSIS_NOT_COMPLETE", "Chỉ tạo quiz sau khi phân tích hoàn tất.");
@@ -52,11 +55,11 @@ export async function POST(request: NextRequest, context: Context) {
       resultId: result.id,
       topicId: analysis.topic_id ?? null,
       specializationId: analysis.specialization_id ?? null,
-      chunks: chunks as ChunkRow[],
+      settings: quizSettings(analysis.quiz_settings), chunks: chunks as ChunkRow[],
     });
     const { data: quiz, error: quizError } = await db.from("quizzes").select("id,title,settings,status,created_at")
       .eq("analysis_id", id).eq("status", "ready").order("created_at", { ascending: false }).limit(1).maybeSingle();
-    if (quizError || !quiz) throw new ApiError(500, "QUIZ_CREATE_FAILED", "Không tạo được quiz.", quizError?.message);
+    if (quizError || !quiz) throw new ApiError(quizError?503:422, quizError?"QUIZ_CREATE_FAILED":"QUIZ_SOURCE_INSUFFICIENT", "Tài liệu chưa đủ để tạo câu hỏi đúng cấu hình. Hãy bổ sung nội dung hoặc chọn độ khó khác.");
     const { data: questions, error: questionError } = await db.from("quiz_questions")
       .select("id,question_index,question_type,prompt,options,difficulty").eq("quiz_id", quiz.id).order("question_index");
     if (questionError || !questions?.length) throw new ApiError(500, "QUIZ_CREATE_FAILED", "Quiz chưa có câu hỏi.", questionError?.message);

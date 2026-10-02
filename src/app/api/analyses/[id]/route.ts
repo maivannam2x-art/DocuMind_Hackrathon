@@ -27,12 +27,14 @@ export async function GET(request: NextRequest, context: Context) {
         const mimeType = String(input.mime_type ?? "");
         const storagePath = typeof input.storage_path === "string" ? input.storage_path : null;
         let previewUrl: string | null = null;
-        if (storagePath && ["image/png", "image/jpeg"].includes(mimeType)) {
+        let sourceUrl: string | null = null;
+        if (storagePath) {
           const { data: signed } = await db.storage.from(String(input.storage_bucket ?? "analysis-inputs")).createSignedUrl(storagePath, 600);
-          previewUrl = signed?.signedUrl ?? null;
+          sourceUrl = signed?.signedUrl ?? null;
+          if (["image/png", "image/jpeg"].includes(mimeType)) previewUrl=sourceUrl;
         }
         const safeInput = Object.fromEntries(Object.entries(input).filter(([key]) => key !== "storage_path" && key !== "storage_bucket"));
-        return { ...safeInput, previewUrl };
+        return { ...safeInput, previewUrl, sourceUrl };
       }));
     }
     return ok({ analysis, inputs: responseInputs, chunks: chunks ?? [], result: result ?? null, quizzes: quizzes ?? [] });

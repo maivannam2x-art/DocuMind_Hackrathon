@@ -31,3 +31,14 @@ Catalog IT có ngôn ngữ lập trình, kỹ nghệ phần mềm, web/backend, 
 5. Kiểm tra đăng ký/đăng nhập, guest, phân tích/quiz/chat/xuất file, upload và signed URL trên production bằng tài liệu thử. Các bucket private không tự sao chép file từ project cũ.
 
 Nếu cần **chuyển dữ liệu người dùng thật** (không chỉ cấu trúc và seed), hãy dùng quy trình backup/restore riêng và mã hóa bản backup, tính cả `auth.users` và Storage objects; không commit dump dữ liệu cá nhân hoặc khóa vào repo. UUID và foreign key của các bảng nghiệp vụ phụ thuộc Auth, nên không thể chỉ copy từng bảng `public` độc lập. Project hiện tại đã có chín migration ghi trong lịch sử Supabase, nhưng tên phiên bản của sáu migration đầu trên server khác tên file hiện tại; đừng suy đoán chúng chưa chạy rồi áp dụng lại. Hai file `02` và `04` đã áp dụng trực tiếp trên project hiện tại (không có bản ghi migration mới trên server), vì vậy hãy dùng file SQL để đồng bộ môi trường mới; sau đó chuẩn hóa lịch sử migration trước khi tiếp tục dùng CLI `db push`.
+
+## Cập nhật 02/10/2026
+
+Sau các file 01–04, chạy lần lượt:
+
+1. `05_production_controls.sql`: bộ đếm quota dùng chung giữa các Vercel Function, RPC chỉ dành cho service role, cấu hình quiz 1–100 câu, checkpoint và lease tạo quiz.
+2. `06_finalization_lease.sql`: lease tổng hợp kết quả, tránh hai tab cùng ghi báo cáo/quiz.
+
+Hai bản migration tương ứng nằm trong `supabase/migrations/`. Các file đều dùng `IF NOT EXISTS`/`CREATE OR REPLACE`; không xóa nội dung tài liệu hoặc thay đổi quyền sở hữu. Đã áp dụng vào project hiện tại; khi chuyển production mới vẫn phải chạy đủ các file theo thứ tự.
+
+Log LLM mặc định chỉ lưu hash và số ký tự; token/thời gian vẫn được giữ. `LLM_LOG_CONTENT=true` chỉ dùng chẩn đoán có chủ đích. `LLM_LOG_RETENTION_DAYS=30` đặt TTL và cron dọn hàng ngày. Không đưa service role/Gemini key vào GitHub.

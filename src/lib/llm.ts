@@ -70,9 +70,10 @@ export async function generateLlm(request: LlmRequest): Promise<LlmResult> {
   const responseSchema = request.purpose === "section_generation" || request.purpose === "repair"
     ? undefined
     : geminiSchema(request.schema);
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`, {
+  let response: Response;
+  try { response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "x-goog-api-key": key },
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: request.system }] },
       contents: [{ role: "user", parts: [
@@ -83,11 +84,13 @@ export async function generateLlm(request: LlmRequest): Promise<LlmResult> {
     }),
     signal: AbortSignal.timeout(request.timeoutMs ?? 90_000),
   });
-  const payload = await response.json() as {
+  } catch (error) { throw new ApiError(503, "LLM_TIMEOUT", "Dịch vụ AI mất kết nối hoặc quá thời gian. Bạn có thể thử tiếp tục xử lý.", error instanceof Error ? error.name : "network"); }
+  let payload: {
     candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
     usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
     error?: { message?: string };
   };
+  try { payload=await response.json(); } catch {throw new ApiError(502,"LLM_PROVIDER_ERROR","Dịch vụ AI trả dữ liệu không hợp lệ.");}
   if (!response.ok) throw new ApiError(502, "LLM_PROVIDER_ERROR", payload.error?.message ?? `Gemini API error (${response.status}).`);
   const raw = payload.candidates?.[0]?.content?.parts?.map(part => part.text ?? "").join("") ?? "";
   let value: unknown;

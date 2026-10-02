@@ -31,7 +31,7 @@ export function errorResponse(error: unknown) {
       message = `Hệ thống chưa thể hoàn tất yêu cầu. Hãy thử lại sau. Mã hỗ trợ: ${requestId}`;
     }
     // Internal provider/database errors are logged server-side; never send them to the browser.
-    return NextResponse.json({ error: { code: error.code, message, requestId } }, { status: error.status });
+    return NextResponse.json({ error: { code: error.code, message, requestId } }, { status: error.status, headers: error.status === 429 ? { "Retry-After": String((error.details as {retryAfter?:number})?.retryAfter ?? 60) } : undefined });
   }
   console.error(`[DocuMind API ${requestId}] INTERNAL_ERROR`, error);
   return NextResponse.json({ error: { code: "INTERNAL_ERROR", message: `Hệ thống chưa thể hoàn tất yêu cầu. Hãy thử lại sau. Mã hỗ trợ: ${requestId}`, requestId } }, { status: 500 });

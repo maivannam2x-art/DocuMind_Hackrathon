@@ -1,3 +1,6 @@
+import {INPUT_LIMITS} from "@/lib/limits";
+import { quizSettings } from "@/lib/quiz-settings";
+import { enforceRateLimit } from "@/lib/rate-limit";
 import { NextRequest } from "next/server";
 import { randomUUID } from "node:crypto";
 import { getIdentity, ownerFilter, setGuestCookie, type RequestIdentity } from "@/lib/auth";
@@ -15,6 +18,7 @@ export async function POST(request: NextRequest) {
   const uploadedPaths: string[] = [];
   try {
     identity = await getIdentity(request, true);
+    await enforceRateLimit(request, identity, "create");
     const db = getAdminDb();
     let body: ReturnType<typeof createAnalysisSchema.parse>;
     let files: File[] = [];
@@ -32,10 +36,10 @@ export async function POST(request: NextRequest) {
       body = safeBody(createAnalysisSchema, await readJson(request));
     }
     assertHasAnalysisInput(body.text, files.length, body.files?.length ?? 0);
-    if (files.length > 10) throw new ApiError(413, "TOO_MANY_FILES", "Mỗi phân tích hỗ trợ tối đa 10 tệp.");
+    if (files.length > INPUT_LIMITS.maxFiles) throw new ApiError(413, "TOO_MANY_FILES", "Mỗi phân tích hỗ trợ tối đa 10 tệp.");
     const title = body.title?.trim() || "Phân tích mới";
     const fileSpecs = body.files ?? [];
-    if (files.length + fileSpecs.length > 10) throw new ApiError(413, "TOO_MANY_FILES", "Mỗi phân tích hỗ trợ tối đa 10 tệp.");
+    if (files.length + fileSpecs.length > INPUT_LIMITS.maxFiles) throw new ApiError(413, "TOO_MANY_FILES", "Mỗi phân tích hỗ trợ tối đa 10 tệp.");
     if (files.length && fileSpecs.length) throw new ApiError(400, "MIXED_UPLOAD_MODES", "Hãy tải tệp theo một luồng duy nhất.");
     const topicCode = body.topicCode?.toUpperCase() ?? (body.specializationId ? "IT" : undefined);
     if (topicCode && !["IT", "AUTO", "GENERAL"].includes(topicCode)) throw new ApiError(400, "UNSUPPORTED_TOPIC", "Hiện có thể chọn IT hoặc để hệ thống tự nhận diện chủ đề.");
@@ -59,7 +63,7 @@ export async function POST(request: NextRequest) {
     const { data: analysis, error: createError } = await db.from("analyses").insert({
       ...ownerFilter(identity), title, topic_id: topicId ?? null, specialization_id: body.specializationId ?? null,
       prompt_template_id: body.promptTemplateId ?? null, custom_prompt: body.customPrompt ?? null,
-      quiz_enabled: body.quizEnabled ?? false, status: "draft",
+      quiz_settings: quizSettings(body.quizSettings), quiz_enabled: body.quizEnabled ?? false, status: "draft",
       expires_at: identity.userId ? null : new Date(Date.now() + ttl * 60 * 60 * 1000).toISOString(),
     }).select().single();
     if (createError || !analysis) throw new ApiError(500, "ANALYSIS_CREATE_FAILED", "Không tạo được phiên phân tích.", createError?.message);

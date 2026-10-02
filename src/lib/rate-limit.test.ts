@@ -1,0 +1,10 @@
+import {beforeEach,expect,it,vi} from 'vitest';
+import {enforceRateLimit} from './rate-limit';
+import {errorResponse} from './http';
+const state=vi.hoisted(()=>({rpc:vi.fn()}));
+vi.mock('./db',()=>({getAdminDb:()=>({rpc:state.rpc})}));
+const identity={userId:null,guestHash:'guest-session',guestCookie:null};
+beforeEach(()=>{state.rpc.mockReset();state.rpc.mockResolvedValue({data:[{allowed:true,retry_after:60}],error:null});});
+it('uses shared database counters and hashes both identity and network buckets',async()=>{await enforceRateLimit(new Request('https://test/api/chat',{headers:{'x-vercel-forwarded-for':'192.0.2.10'}}),identity,'chat');expect(state.rpc).toHaveBeenCalledTimes(2);for(const [,args] of state.rpc.mock.calls){expect(args.p_key).toMatch(/^[a-f0-9]{64}$/);expect(args.p_key).not.toContain('192.0.2.10');}expect(state.rpc.mock.calls[0][1].p_limit).toBe(20);});
+it('returns 429 with Retry-After on quota exhaustion',async()=>{state.rpc.mockResolvedValue({data:[{allowed:false,retry_after:37}]});try{await enforceRateLimit(new Request('https://test/api/run'),identity,'run');throw new Error('expected rejection');}catch(error){const response=errorResponse(error);expect(response.status).toBe(429);expect(response.headers.get('Retry-After')).toBe('37');}});
+it('fails closed when distributed counters are unavailable',async()=>{state.rpc.mockResolvedValue({data:null,error:{message:'database unavailable'}});await expect(enforceRateLimit(new Request('https://test/api/run'),identity,'run')).rejects.toMatchObject({status:503,code:'QUOTA_UNAVAILABLE'});});
