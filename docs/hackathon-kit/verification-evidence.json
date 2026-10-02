@@ -1,0 +1,356 @@
+{
+  "sourceCommit": "d76e57f5e2fb3c32c54276bd28ac0415dc816a43",
+  "ciRun": 37047060707,
+  "ciJob": 110970991913,
+  "ciStatus": "success",
+  "unitTestsPassed": 144,
+  "e2eTestsPassed": 22,
+  "vercel": "success",
+  "databaseBootstrap": {
+    "audit": {
+      "tables": 19,
+      "topics": 1,
+      "specializations": 73,
+      "prompts": 43,
+      "rules": 7,
+      "private_buckets": 3,
+      "rls_tables": 19
+    },
+    "profileTrigger": true,
+    "quota": true,
+    "circuit": true,
+    "privileges": {
+      "anon_answers": false,
+      "user_answers": false,
+      "direct_state_update": false,
+      "public_quota": false,
+      "service_insert": true
+    },
+    "columns": [
+      {
+        "table_name": "analyses",
+        "columns": [
+          "id",
+          "user_id",
+          "guest_session_hash",
+          "title",
+          "topic_id",
+          "specialization_id",
+          "prompt_template_id",
+          "custom_prompt",
+          "quiz_enabled",
+          "status",
+          "validation_report",
+          "error_code",
+          "error_message",
+          "model_provider",
+          "model_name",
+          "confirmed_at",
+          "completed_at",
+          "expires_at",
+          "created_at",
+          "updated_at",
+          "quiz_settings",
+          "finalization_lease_until"
+        ]
+      },
+      {
+        "table_name": "analysis_activity",
+        "columns": [
+          "id",
+          "analysis_id",
+          "actor",
+          "label",
+          "model",
+          "status",
+          "created_at",
+          "completed_at"
+        ]
+      },
+      {
+        "table_name": "analysis_chunks",
+        "columns": [
+          "id",
+          "analysis_id",
+          "input_id",
+          "chunk_index",
+          "title",
+          "content",
+          "char_start",
+          "char_end",
+          "status",
+          "retry_count",
+          "error_message",
+          "generated_content",
+          "created_at",
+          "updated_at",
+          "quiz_finished",
+          "quiz_batches",
+          "quiz_lease_until"
+        ]
+      },
+      {
+        "table_name": "analysis_inputs",
+        "columns": [
+          "id",
+          "analysis_id",
+          "input_kind",
+          "original_name",
+          "mime_type",
+          "byte_size",
+          "storage_bucket",
+          "storage_path",
+          "original_text",
+          "normalized_text",
+          "edited_text",
+          "status",
+          "validation_report",
+          "metadata",
+          "position",
+          "created_at",
+          "updated_at",
+          "ingest_lease_until"
+        ]
+      },
+      {
+        "table_name": "analysis_results",
+        "columns": [
+          "id",
+          "analysis_id",
+          "version",
+          "schema_version",
+          "result_json",
+          "summary",
+          "source_metadata",
+          "is_current",
+          "created_at"
+        ]
+      },
+      {
+        "table_name": "api_rate_limits",
+        "columns": [
+          "key_hash",
+          "window_started_at",
+          "hits",
+          "expires_at"
+        ]
+      },
+      {
+        "table_name": "chat_messages",
+        "columns": [
+          "id",
+          "analysis_id",
+          "role",
+          "content",
+          "citations",
+          "metadata",
+          "created_at"
+        ]
+      },
+      {
+        "table_name": "exports",
+        "columns": [
+          "id",
+          "analysis_id",
+          "result_id",
+          "format",
+          "status",
+          "storage_bucket",
+          "storage_path",
+          "created_at"
+        ]
+      },
+      {
+        "table_name": "gemini_model_health",
+        "columns": [
+          "scope",
+          "model",
+          "failures",
+          "generation",
+          "open_until",
+          "probe_until",
+          "last_status",
+          "updated_at"
+        ]
+      },
+      {
+        "table_name": "generated_assets",
+        "columns": [
+          "id",
+          "analysis_id",
+          "result_id",
+          "asset_type",
+          "title",
+          "source",
+          "metadata",
+          "storage_bucket",
+          "storage_path",
+          "created_at"
+        ]
+      },
+      {
+        "table_name": "llm_exchanges",
+        "columns": [
+          "id",
+          "analysis_id",
+          "chunk_id",
+          "prompt_template_id",
+          "purpose",
+          "provider",
+          "model",
+          "attempt",
+          "request_payload",
+          "response_payload",
+          "input_tokens",
+          "output_tokens",
+          "latency_ms",
+          "status",
+          "error_message",
+          "created_at"
+        ]
+      },
+      {
+        "table_name": "profiles",
+        "columns": [
+          "id",
+          "username",
+          "display_name",
+          "avatar_url",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      {
+        "table_name": "prompt_templates",
+        "columns": [
+          "id",
+          "purpose",
+          "topic_id",
+          "specialization_id",
+          "version",
+          "name",
+          "system_prompt",
+          "user_prompt_template",
+          "output_schema",
+          "model_config",
+          "is_active",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      {
+        "table_name": "quiz_attempts",
+        "columns": [
+          "id",
+          "quiz_id",
+          "user_id",
+          "guest_session_hash",
+          "answers",
+          "score",
+          "total_questions",
+          "status",
+          "started_at",
+          "submitted_at"
+        ]
+      },
+      {
+        "table_name": "quiz_questions",
+        "columns": [
+          "id",
+          "quiz_id",
+          "question_index",
+          "question_type",
+          "prompt",
+          "options",
+          "answer",
+          "explanation",
+          "difficulty",
+          "source_chunk_id",
+          "created_at"
+        ]
+      },
+      {
+        "table_name": "quizzes",
+        "columns": [
+          "id",
+          "analysis_id",
+          "result_id",
+          "title",
+          "settings",
+          "status",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      {
+        "table_name": "topic_specializations",
+        "columns": [
+          "id",
+          "topic_id",
+          "parent_id",
+          "name",
+          "slug",
+          "description",
+          "is_active",
+          "sort_order",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      {
+        "table_name": "topics",
+        "columns": [
+          "id",
+          "code",
+          "name",
+          "description",
+          "is_active",
+          "sort_order",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      {
+        "table_name": "validation_rules",
+        "columns": [
+          "id",
+          "code",
+          "stage",
+          "severity",
+          "description",
+          "config",
+          "is_active",
+          "sort_order",
+          "created_at",
+          "updated_at"
+        ]
+      }
+    ],
+    "scope": "Full unmodified application bootstrap on local PGlite PostgreSQL with managed auth/storage schema doubles; not hosted Auth/Storage integration."
+  },
+  "liveRegistration": {
+    "registrationHTTP": 201,
+    "emailConfirmationRequired": false,
+    "immediatePasswordLoginHTTP": 200,
+    "sessionIssued": true,
+    "supabaseConfirmedAccount": true,
+    "profileHTTP": 200,
+    "profileNameMatches": true,
+    "wrongPasswordHTTP": 400,
+    "duplicateAccountHTTP": 409,
+    "scope": "Live production new synthetic QA account; no mailbox confirmation, no credentials in evidence."
+  },
+  "moduleImport": {
+    "files": 156,
+    "uniqueOwners": true,
+    "partsDisjoint": true,
+    "importedCommits": 24,
+    "byteIdenticalFiles": 156,
+    "bracketPathsLiteral": true,
+    "testScope": "Local isolated Git repositories; source files copied from verified workspace snapshot, temporary synthetic commit only inside QA."
+  },
+  "sourceGitBlobVerification": {
+    "checked": 156,
+    "mismatches": 0
+  }
+}
