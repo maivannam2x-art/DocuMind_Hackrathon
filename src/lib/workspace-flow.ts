@@ -43,3 +43,14 @@ export function workspaceFlow<A>(
       };
   }
 }
+
+/** Reconcile UI from the server after pause, retry or a lost response. */
+export function recoveryScreen(
+  status: string,
+  confirmed: boolean,
+): WorkspaceScreen {
+  if (status === "completed") return "result";
+  return confirmed && ["ready", "processing", "failed"].includes(status)
+    ? "processing"
+    : "review";
+}

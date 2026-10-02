@@ -67,7 +67,7 @@ const result = {
     },
   ],
 };
-async function fixture(page: Page) {
+async function fixture(page: Page, pauseCompletes = false) {
   let status = "draft";
   let quizSettings = {
     questionCount: 20,
@@ -111,7 +111,11 @@ async function fixture(page: Page) {
       status = "ready";
       data = { status };
     } else if (path.endsWith("/run")) {
-      if (runCount++ === 0) {
+      if (pauseCompletes) {
+        status = "completed";
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        data = { status };
+      } else if (runCount++ === 0) {
         status = "processing";
         data = { status, completedChunks: 0, totalChunks: 1, waitMs: 300 };
       } else {
@@ -195,10 +199,14 @@ async function fixture(page: Page) {
         chunks: [{ title: "IT", content: source }],
         outline,
       };
-    await route.fulfill({
-      status: method === "POST" && path === "/api/analyses" ? 201 : 200,
-      json: { data },
-    });
+    await route
+      .fulfill({
+        status: method === "POST" && path === "/api/analyses" ? 201 : 200,
+        json: { data },
+      })
+      .catch((error) => {
+        if (!pauseCompletes) throw error;
+      });
   });
   await page.route("**/fixture/report.md", (route) =>
     route.fulfill({
@@ -304,4 +312,31 @@ test("result tabs support keyboard navigation and mobile has no overflow", async
     width: window.innerWidth,
   }));
   expect(dimensions.scroll).toBeLessThanOrEqual(dimensions.width + 1);
+});
+
+// A response can be lost after the server has already completed the analysis.
+test("pause reconciles a completed server session instead of reopening review", async ({
+  page,
+}) => {
+  await fixture(page, true);
+  await page.goto("/");
+  await page.getByLabel("Nội dung văn bản").fill(source);
+  await page.getByRole("button", { name: /Kiểm tra tài liệu/ }).click();
+  await expect(
+    page.getByRole("heading", { name: "Kiểm tra tài liệu trước khi xử lý" }),
+  ).toBeVisible();
+  const run = page.waitForRequest((r) =>
+    new URL(r.url()).pathname.endsWith("/run"),
+  );
+  await page.getByRole("button", { name: /Xác nhận và xử lý/ }).click();
+  await run;
+  await page
+    .getByRole("button", { name: "Tạm dừng sau lượt hiện tại" })
+    .click();
+  await expect(
+    page.getByRole("tab", { name: "Tổng quan", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Kiểm tra tài liệu trước khi xử lý" }),
+  ).toHaveCount(0);
 });

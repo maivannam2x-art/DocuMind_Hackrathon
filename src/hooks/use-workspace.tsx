@@ -1,6 +1,7 @@
 "use client";
 import {
   workspaceFlow,
+  recoveryScreen,
   type WorkspaceScreen,
   type FlowState,
   type FlowAction,
@@ -915,15 +916,24 @@ export function useWorkspace() {
         setToast(
           "Đã tạm dừng gửi lượt mới. Lượt đang chạy trên server có thể hoàn tất; tiến độ được lưu để tiếp tục.",
         );
-      setScreen("review");
+      setScreen(paused || retrying ? "processing" : "review");
       if (analysisId) {
         try {
           const details = await api<{ analysis: Analysis }>(
             `/api/analyses/${analysisId}`,
           );
           setAnalysis(details.analysis);
+          const recovered = recoveryScreen(
+            details.analysis.status,
+            Boolean(details.analysis.confirmed_at),
+          );
+          if (recovered === "result") {
+            await loadResult(analysisId, details.analysis);
+            setError("");
+            setToast("AI đã hoàn tất xử lý. Kết quả của phiên đã được lưu.");
+          } else setScreen(recovered);
         } catch {
-          /* show original processing error */
+          /* Keep the recoverable screen when the status request is unavailable. */
         }
       }
     } finally {

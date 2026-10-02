@@ -5,7 +5,7 @@ import { privateLogPayload } from "./log-privacy";
 import { INPUT_LIMITS, supportedFile } from "./limits";
 import { mimeTypeForFilename } from "./documents";
 import { RequestFailure, resumableLoop } from "./resumable-loop";
-import { workspaceFlow } from "./workspace-flow";
+import { workspaceFlow, recoveryScreen } from "./workspace-flow";
 import { generateLlm } from "./llm";
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -196,15 +196,13 @@ describe("Gemini transport", () => {
   it("uses a header instead of a URL API key", async () => {
     vi.stubEnv("LLM_PROVIDER", "gemini");
     vi.stubEnv("GEMINI_API_KEY", "test-private-key");
-    const fetch = vi
-      .fn()
-      .mockResolvedValue(
-        new Response(
-          JSON.stringify({
-            candidates: [{ content: { parts: [{ text: '{"answer":"ok"}' }] } }],
-          }),
-        ),
-      );
+    const fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          candidates: [{ content: { parts: [{ text: '{"answer":"ok"}' }] } }],
+        }),
+      ),
+    );
     vi.stubGlobal("fetch", fetch);
     await generateLlm({ purpose: "chat", system: "test", prompt: "test" });
     const [url, options] = fetch.mock.calls[0];
@@ -237,4 +235,12 @@ it("retains analysis and progress when switching screens", () => {
     ...state,
     screen: "history",
   });
+});
+
+it("recovers completed processing even when its final response was lost", () => {
+  expect(recoveryScreen("completed", true)).toBe("result");
+  expect(recoveryScreen("processing", true)).toBe("processing");
+  expect(recoveryScreen("ready", true)).toBe("processing");
+  expect(recoveryScreen("failed", true)).toBe("processing");
+  expect(recoveryScreen("needs_review", false)).toBe("review");
 });
