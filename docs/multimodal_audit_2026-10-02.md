@@ -18,7 +18,7 @@ Không đổi schema hoặc RLS. Checkpoint, số ảnh bỏ qua, cảnh báo v�
 
 ## Kiểm thử tự động
 
-57 test đạt, gồm: DOCX bốn hình có thứ tự trước/sau, ảnh minh họa bị bỏ qua; Office Math tại chỗ; native Word chart có dữ liệu; PDF hai trang trong đó trang đầu có cả lớp chữ và hình; tiếp tục checkpoint không lặp văn bản; Vision trả JSON sai bị từ chối; LaTeX/Mermaid không bị chia giữa khối; khôi phục visual nguồn bị LLM bỏ sót; bảng và ảnh/công thức trong các định dạng báo cáo. Các test Vision dùng response giả lập để kiểm tra code, không phải chứng cứ độ chính xác nhận diện của mô hình thật.
+59 test đạt, gồm: DOCX bốn hình có thứ tự trước/sau, ảnh minh họa bị bỏ qua; Office Math tại chỗ; native Word chart có dữ liệu; PDF hai trang trong đó trang đầu có cả lớp chữ và hình; tiếp tục checkpoint không lặp văn bản; Vision trả JSON sai bị từ chối; LaTeX/Mermaid không bị chia giữa khối; khôi phục visual nguồn bị LLM bỏ sót; bảng và ảnh/công thức trong các định dạng báo cáo. Các test Vision dùng response giả lập để kiểm tra code, không phải chứng cứ độ chính xác nhận diện của mô hình thật.
 
 ## Giới hạn phải phân biệt
 
@@ -30,4 +30,13 @@ Không đổi schema hoặc RLS. Checkpoint, số ảnh bỏ qua, cảnh báo v�
 
 ## Kiểm chứng production
 
-Chờ deploy để chạy tài liệu PDF/DOCX tổng hợp qua Gemini thật và kiểm tra UI cùng các tệp xuất. Kết quả sẽ được bổ sung sau kiểm chứng.
+- Vercel deploy thành công ở commit `4e841f100adb724d6d636f3943d443bffa469fd3`; TypeScript và build production đạt. 59/59 test đạt sau các bản sửa phát hiện trong kiểm chứng.
+- Phiên API `76a16e52-4239-4197-ae1f-1597684c41c2`: upload signed URL hai tệp PDF/DOCX → 6 ingest request tiếp tục checkpoint → validate → confirm → run → completed. PDF có lớp chữ vẫn đọc sơ đồ; ảnh công thức trả `T(n)=n \log(n)`; Office Math trả `x+1`. Cả hai tài liệu bỏ đúng một hình phong cảnh minh họa và giữ câu sau hình. Đã đối chiếu vị trí bằng các marker BEFORE/AFTER. Đây là hình minh họa vẽ tổng hợp, chưa phải kiểm chứng mọi loại ảnh chụp thật.
+- Phiên UI `4057f8e3-1a2f-4285-a10f-8cc4a07d71d8`: nhập văn bản có Mermaid/LaTeX/bảng → Review đọc và mở editor → confirm → completed → reload → mở lại lịch sử → xem kết quả → xuất Word/PDF. Supabase ghi nhận 2 generated assets và hai exports trạng thái ready.
+- Kiểm tra UI phát hiện Mermaid lỗi khi đo SVG trong container không gắn vào DOM. Đã dùng host nằm ngoài màn hình, gắn vào DOM và luôn cleanup. Trên production đã xác minh sơ đồ dựng thành ảnh sau sửa. Có test cleanup cả khi thành công/lỗi.
+- PDF qua API được mở thành ảnh để kiểm tra font tiếng Việt và công thức. Phát hiện PDFKit `fit` phóng biểu thức ngắn ra quá lớn; đã chuyển sang kích thước cụ thể và cập nhật vị trí dòng sau ảnh. Word dùng tỷ lệ ảnh công thức phù hợp hơn.
+- Cả 5 exports PDF/DOCX/HTML/Markdown/JSON qua API trả HTTP 200 và tải được bytes hợp lệ. Gọi export API trực tiếp trước khi có asset Mermaid vẫn giữ mã nguồn; luồng UI chuẩn bị ảnh trước export. Không coi mã nguồn fallback là sơ đồ đã dựng.
+- Giới hạn kiểm chứng browser: file chooser của môi trường kiểm thử nhận tệp tổng hợp thành 0 byte; đã kiểm tra file gốc và chuyển upload thật sang API. UI đã bổ sung thông báo riêng cho tệp rỗng. Trình duyệt cloud báo download failed khi nhận PDF, dù backend đã tạo export ready; Word trả đường dẫn download nhưng file không có trong thư mục chia sẻ. Vì vậy chưa xác nhận khả năng tải UI tới thiết bị ở môi trường này; tải API đã kiểm chứng.
+- Không tuyên bố tất cả tài liệu/bố cục/ảnh đều chính xác; cần kiểm tra bộ tài liệu thật của người dùng, đặc biệt trang nhiều cột, hình mờ, ảnh chụp và PlantUML. Không thực hiện tái xử lý dữ liệu cũ tự động.
+
+Ảnh trang xuất báo cáo: `docs/screenshots/multimodal-report.jpg`.
