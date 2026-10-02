@@ -1,0 +1,141 @@
+{
+  "requests": [
+    {
+      "path": "/api/analyses",
+      "status": 201
+    },
+    {
+      "path": "/api/analyses/ba257923-cf8a-4c8c-ad17-86a734965a7c/ingest",
+      "status": 200
+    },
+    {
+      "path": "/api/analyses/ba257923-cf8a-4c8c-ad17-86a734965a7c/ingest",
+      "status": 200
+    },
+    {
+      "path": "/api/analyses/ba257923-cf8a-4c8c-ad17-86a734965a7c/ingest",
+      "status": 200
+    },
+    {
+      "path": "/api/analyses/ba257923-cf8a-4c8c-ad17-86a734965a7c/validate",
+      "status": 200
+    },
+    {
+      "path": "/api/analyses/ba257923-cf8a-4c8c-ad17-86a734965a7c?includeContent=true",
+      "status": 200
+    },
+    {
+      "path": "/api/analyses/ba257923-cf8a-4c8c-ad17-86a734965a7c/inputs/8972dc12-47b9-4adf-98e3-068ec5e6048e/source",
+      "status": 200
+    },
+    {
+      "path": "/api/analyses/ba257923-cf8a-4c8c-ad17-86a734965a7c/inputs/96d531e8-0c37-4746-bedd-a14aa531f96f/source",
+      "status": 200
+    },
+    {
+      "path": "/api/analyses/ba257923-cf8a-4c8c-ad17-86a734965a7c/inputs/a54a5efa-ec67-42a8-8348-5e424203c19c/source",
+      "status": 200
+    },
+    {
+      "path": "/api/analyses/0217b07f-075a-4549-8605-8e02a6f10d2d?includeContent=true",
+      "status": 200
+    },
+    {
+      "path": "/api/analyses/0217b07f-075a-4549-8605-8e02a6f10d2d/inputs/8b26affc-e56e-4220-a777-10f10e29c3a4/source",
+      "status": 200
+    }
+  ],
+  "id": "ba257923-cf8a-4c8c-ad17-86a734965a7c",
+  "inputStatuses": [
+    {
+      "name": "QA-small-IT.txt",
+      "status": "needs_review"
+    },
+    {
+      "name": "QA-missing-text.txt",
+      "status": "error"
+    },
+    {
+      "name": "QA-long-IT.md",
+      "status": "valid"
+    }
+  ],
+  "issues": {
+    "errors": [
+      {
+        "name": "QA-missing-text.txt",
+        "location": "QA-missing-text.txt · Toàn tài liệu",
+        "message": "Không trích xuất đủ văn bản từ QA-missing-text.txt."
+      }
+    ],
+    "warnings": [
+      {
+        "name": "QA-small-IT.txt",
+        "location": "QA-small-IT.txt · Toàn tài liệu",
+        "message": "Nội dung ngắn; kết quả có thể ít chi tiết. Kiểm tra bản gốc nếu nghi ngờ thiếu nội dung."
+      },
+      {
+        "name": "QA-missing-text.txt",
+        "location": "QA-missing-text.txt · Toàn tài liệu",
+        "message": "Nội dung ngắn; kết quả có thể ít chi tiết. Kiểm tra bản gốc nếu nghi ngờ thiếu nội dung."
+      }
+    ]
+  },
+  "originals": [
+    {
+      "name": "QA-small-IT.txt",
+      "status": 200,
+      "exactBytes": true
+    },
+    {
+      "name": "QA-missing-text.txt",
+      "status": 200,
+      "exactBytes": true
+    },
+    {
+      "name": "QA-long-IT.md",
+      "status": 200,
+      "exactBytes": true
+    }
+  ],
+  "authorization": {
+    "noSession": 401,
+    "crossOwner": 404
+  },
+  "pastedOriginal": true,
+  "commit": "b9cd25ca72da2e5d2c70daaa0f7b972374ba3839",
+  "ci": {
+    "run": 37043417494,
+    "job": 110958829545,
+    "unitPassed": 139,
+    "e2ePassed": 22,
+    "lint": "passed",
+    "build": "passed"
+  },
+  "databaseCircuit": {
+    "threshold": 5,
+    "cooldownSeconds": 300,
+    "lateCompletionIgnored": true,
+    "singleRecoveryProbe": true,
+    "parallelClaimsAllowed": 1,
+    "qaRowsCleaned": true,
+    "rls": true,
+    "anonAccess": false,
+    "authenticatedAccess": false
+  },
+  "liveBrowser": {
+    "analysisId": "78be1c55-c47a-4807-a04f-11b5077689b4",
+    "reviewRestoredAfterReload": true,
+    "alwaysVisibleLog": true,
+    "originalSourceVisible": true,
+    "pipelineStatus": "completed",
+    "successfulModel": "gemini-3.1-flash-lite",
+    "sections": 2,
+    "chatRequestsSucceeded": 3,
+    "cooldownModels": 8,
+    "actualCallsPerFailedModel": 5,
+    "skipsPerFailedModelOnNextChat": 1,
+    "successfulModelCalls": 6,
+    "cooldownSkipVerified": true
+  }
+}
