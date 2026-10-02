@@ -1,13 +1,10 @@
 "use client";
 import type { Activity } from "@/lib/activity";
 export function ActivityPanel({ items }: { items: Activity[] }) {
-  if (!items.length) return null;
   return (
-    <details
-      className="panel activity-panel"
-      open={items.some((i) => i.status === "running")}
-    >
-      <summary>Nhật ký xử lý · AI và hệ thống nội bộ</summary>
+    <section className="panel activity-panel" aria-label="Nhật ký xử lý">
+      <h3>Nhật ký xử lý · AI và hệ thống nội bộ</h3>
+      {!items.length && <p>Chưa có tác vụ. Nhật ký sẽ cập nhật khi hệ thống xử lý.</p>}
       <ul>
         {items.map((i) => (
           <li key={i.id}>
@@ -28,6 +25,6 @@ export function ActivityPanel({ items }: { items: Activity[] }) {
           </li>
         ))}
       </ul>
-    </details>
+    </section>
   );
 }

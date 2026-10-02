@@ -1,6 +1,7 @@
 import { getAdminDb } from "@/lib/db";
 import { ApiError } from "@/lib/http";
 import { startActivity, finishActivity } from "@/lib/activity";
+import { modelHealthEvent } from "@/lib/model-health";
 import { availableModels } from "@/lib/gemini-routing";
 import { thinkingConfig, type AnalysisDepth } from "@/lib/analysis-depth";
 import { mockResponse } from "@/lib/mock-llm";
@@ -171,8 +172,21 @@ export async function generateLlm(request: LlmRequest): Promise<LlmResult> {
       : geminiSchema(request.schema);
   const deadline = started + (request.timeoutMs ?? 90000);
   let lastStatus = 503;
+  let retryAfter = 60;
   for (const [index, model] of models.entries()) {
     if (Date.now() + 1000 >= deadline) break;
+    const health = await modelHealthEvent(key, model, "claim");
+    if (!health.allowed) {
+      retryAfter = Math.max(retryAfter, health.retryAfter);
+      const skipped = await startActivity(request.analysisId, "system",
+        `Bỏ qua model tạm ngưng · thử lại sau ${health.retryAfter} giây · chuyển model tiếp theo`, model);
+      await finishActivity(skipped, "succeeded");
+      continue;
+    }
+    const failModel = async (status: number) => {
+      const state = await modelHealthEvent(key, model, "failure", health.generation, status);
+      await finishActivity(id, "failed", `${label} · lỗi ${status}${state.openUntil ? " · tạm ngưng model 5 phút" : " · chuyển model tiếp theo"}`);
+    };
     const id = await startActivity(
       request.analysisId,
       "ai",
@@ -226,7 +240,7 @@ export async function generateLlm(request: LlmRequest): Promise<LlmResult> {
       lastStatus = response.status;
       const payload = await response.json().catch(() => null);
       if (!response.ok) {
-        await finishActivity(id, "failed");
+        await failModel(response.status);
         if ([429, 500, 502, 503, 504, 404].includes(response.status)) continue;
         throw new ApiError(
           response.status === 401 || response.status === 403 ? 503 : 422,
@@ -236,7 +250,7 @@ export async function generateLlm(request: LlmRequest): Promise<LlmResult> {
       }
       if (!payload) {
         lastStatus = 502;
-        await finishActivity(id, "failed");
+        await failModel(502);
         continue;
       }
       const candidate = payload.candidates?.[0];
@@ -247,7 +261,7 @@ export async function generateLlm(request: LlmRequest): Promise<LlmResult> {
           .join("") ?? "";
       if (!raw || candidate.finishReason === "MAX_TOKENS") {
         lastStatus = 502;
-        await finishActivity(id, "failed");
+        await failModel(502);
         continue;
       }
       let value: unknown;
@@ -256,6 +270,7 @@ export async function generateLlm(request: LlmRequest): Promise<LlmResult> {
       } catch {
         value = raw;
       }
+      await modelHealthEvent(key, model, "success", health.generation);
       await finishActivity(id, "succeeded");
       return {
         value,
@@ -267,8 +282,8 @@ export async function generateLlm(request: LlmRequest): Promise<LlmResult> {
         latencyMs: Date.now() - started,
       };
     } catch (error) {
-      await finishActivity(id, "failed");
-      if (error instanceof ApiError) throw error;
+      if (error instanceof ApiError) { await finishActivity(id, "failed"); throw error; }
+      await failModel(503);
       lastStatus = 503;
     }
   }
@@ -276,6 +291,6 @@ export async function generateLlm(request: LlmRequest): Promise<LlmResult> {
     lastStatus === 429 ? 429 : 503,
     lastStatus === 429 ? "LLM_RATE_LIMIT" : "LLM_TIMEOUT",
     "Các model AI khả dụng đang bận hoặc không phản hồi. Tiến độ đã lưu; hãy thử tiếp tục sau.",
-    { retryAfter: 60 },
+    { retryAfter },
   );
 }

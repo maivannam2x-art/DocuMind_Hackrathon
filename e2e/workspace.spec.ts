@@ -602,3 +602,57 @@ test("restores extraction completed after F5 and validates before showing review
   expect(events.some((e) => e.endsWith("/validate"))).toBe(true);
   expect(events.some((e) => e.endsWith("/confirm"))).toBe(false);
 });
+
+test("review identifies the affected file and PDF page; logs remain visible after completion", async ({ page }) => {
+  await fixture(page);
+  await page.route("**/validate", route => route.fulfill({ json: { data: { report: { ...report, warnings: [{ message: "Trang 3: công thức chỉ có mô tả; đối chiếu bản gốc.", inputId: "input", location: "IT.pdf · Trang 3" }] } } } }));
+  await page.goto("/");
+  await page.getByLabel("Nội dung văn bản").fill(source);
+  await page.getByRole("button", { name: /Kiểm tra tài liệu/ }).click();
+  await expect(page.locator(".validation-warning")).toContainText("IT.pdf · Trang 3");
+  await page.getByRole("button", { name: "Xem vị trí trong tài liệu ↓" }).click();
+  await expect(page.locator("#input-input")).toHaveAttribute("open", "");
+  await expect(page.getByRole("region", { name: "Nhật ký xử lý" })).toBeVisible();
+  await expect(page.locator(".activity-panel summary")).toHaveCount(0);
+  await page.getByRole("button", { name: /Xác nhận và xử lý/ }).click();
+  await expect(page.getByRole("tab", { name: "Tổng quan", exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Nhật ký xử lý" })).toBeVisible();
+});
+test("long Markdown, code and tables stay inside result cards and the mobile viewport", async ({ page }) => {
+  await fixture(page);
+  const long = "LONGTOKEN".repeat(140);
+  await page.route("**/result", route => route.fulfill({ json: { data: {
+    analysis: { id, title: "IT test", status: "completed", quiz_enabled: true },
+    result: { id: "result", result_json: { ...result, sections: [{ title: "Nội dung dài", blocks: [
+      { type: "paragraph", content: `**Tiêu đề**\n\n${long}\n\n- \`${long}\`` },
+      { type: "code", contentType: "code", content: `const longText = "${long}";` },
+      { type: "table", contentType: "table", content: { headers: ["Key", "Value"], rows: [[long, long]] } },
+    ] }] } },
+  } } }));
+  await page.goto("/"); await complete(page);
+  await page.getByRole("tab", { name: "Phân tích chi tiết", exact: true }).click();
+  await page.getByRole("button", { name: /Mở tất cả/ }).click();
+  await expect(page.locator(".rich-text").first()).toContainText(long);
+  const size = await page.evaluate(() => ({ scroll: document.documentElement.scrollWidth, width: innerWidth }));
+  expect(size.scroll).toBeLessThanOrEqual(size.width + 1);
+  for (const card of await page.locator(".content-block").all()) {
+    const bounds = await card.boundingBox();
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(size.width + 1);
+  }
+});
+test("reopening history shows the original file and asks for a fresh private URL", async ({ page }) => {
+  await fixture(page);
+  await page.route(`**/api/analyses/${id}/inputs/input/source`, route => route.fulfill({ json: { data: { url: "http://127.0.0.1:3000/fixture/original.txt", expiresInSeconds: 600 } } }));
+  await page.route("**/fixture/original.txt", route => route.fulfill({ body: source, contentType: "text/plain" }));
+  await page.goto("/"); await complete(page);
+  await page.getByRole("button", { name: /^▦?\s*Lịch sử/ }).click();
+  await page.locator(".history-row").first().click();
+  await expect(page.getByRole("region", { name: "Tài liệu đầu vào" })).toContainText("Văn bản");
+  const request = page.waitForRequest(request => new URL(request.url()).pathname.endsWith("/inputs/input/source"));
+  const popupPromise = page.waitForEvent("popup");
+  await page.getByRole("button", { name: "Mở bản gốc ↗" }).click();
+  await request;
+  const popup = await popupPromise;
+  await expect(popup).toHaveURL(/fixture\/original.txt/);
+  await popup.close();
+});

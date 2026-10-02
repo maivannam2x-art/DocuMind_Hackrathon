@@ -1,25 +1,17 @@
 import { createHash } from "node:crypto";
 export const DEFAULT_GEMINI_MODELS = [
-  "gemini-3.8-flash",
-  "gemini-3.5-flash",
-  "gemini-3.5-flash-lite",
-  "gemini-3.7-flash",
-  "gemini-3.6-flash",
-  "gemini-3-flash-preview",
-  "gemini-3.1-flash-lite",
-  "gemini-2.5-flash",
-  "gemini-2.5-flash-lite",
-  "gemini-2.5-pro",
-  "gemini-3.1-pro-preview",
-  "gemini-2.0-flash",
-  "gemini-2.0-flash-lite",
+  "gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-3.8-flash",
+  "gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-2.5-flash",
+  "gemini-2.5-flash-lite", "gemini-2.5-pro", "gemini-3-flash",
+  "gemini-3.1-pro", "gemini-3.1-flash-lite",
+  "gemini-3.6-flash", "gemini-3.7-flash",
 ];
 let cached:
   { fingerprint: string; until: number; models: Set<string> } | undefined;
 export function configuredModels() {
   return [
     ...new Set([
-      process.env.GEMINI_MODEL ?? "gemini-3.8-flash",
+      ...(process.env.GEMINI_MODEL ? [process.env.GEMINI_MODEL] : []),
       ...(process.env.GEMINI_FALLBACK_MODELS?.split(",")
         .map((s) => s.trim())
         .filter(Boolean) ?? DEFAULT_GEMINI_MODELS),
@@ -36,11 +28,21 @@ export function textModel(model: {
     !/image|audio|tts|live|embedding|robotics|computer-use/i.test(model.name),
   );
 }
+export function catalogCandidates(names: Set<string>) {
+  const aliases: Record<string, string[]> = {
+    "gemini-3-flash": ["gemini-3-flash", "gemini-3-flash-preview"],
+    "gemini-3.1-pro": ["gemini-3.1-pro", "gemini-3.1-pro-preview"],
+  };
+  return [...new Set(configuredModels().flatMap(model => {
+    const match = (aliases[model] ?? [model]).find(name => names.has(name));
+    return match ? [match] : [];
+  }))];
+}
 /** Intersect operator-approved candidates with the live API catalog; never invent model IDs. */
 export async function availableModels(key: string) {
   const fingerprint = createHash("sha256").update(key).digest("hex");
   if (cached?.fingerprint === fingerprint && cached.until > Date.now())
-    return configuredModels().filter((m) => cached!.models.has(m));
+    return catalogCandidates(cached.models);
   try {
     const names = new Set<string>();
     let token = "";
@@ -61,7 +63,7 @@ export async function availableModels(key: string) {
       token = p.nextPageToken ?? "";
     } while (token);
     cached = { fingerprint, until: Date.now() + 300000, models: names };
-    return configuredModels().filter((m) => names.has(m));
+    return catalogCandidates(names);
   } catch {
     return configuredModels();
   }

@@ -1,3 +1,4 @@
+vi.mock("./model-health", () => ({ modelHealthEvent: async () => ({ allowed: true, generation: 0, failures: 0, openUntil: null, retryAfter: 0 }) }));
 import { testCatalog } from "./testing-gemini";
 import { resetModelCache } from "./gemini-routing";
 import { afterEach, describe, expect, it, vi } from "vitest";

@@ -178,7 +178,10 @@ export async function POST(
         .update({
           status: "error",
           ingest_lease_until: null,
-          metadata: { ...input.metadata, errorCode: code },
+          metadata: { ...input.metadata, errorCode: code,
+            ...(cause instanceof ApiError && cause.details && typeof cause.details === "object" && "extractionLocation" in cause.details
+              ? { extractionErrorLocation: cause.details.extractionLocation } : {}),
+          },
         })
         .eq("id", input.id)
         .eq("ingest_lease_until", lease);

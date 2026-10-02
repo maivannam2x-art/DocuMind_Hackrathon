@@ -3,6 +3,7 @@ import { useState } from "react";
 import { SourcePreview } from "@/components/source-preview";
 
 export function ExtractedDocument({
+  id,
   name,
   text,
   previewUrl,
@@ -12,6 +13,7 @@ export function ExtractedDocument({
   headings,
   onChange,
 }: {
+  id?: string;
   name: string;
   text: string;
   previewUrl?: string | null;
@@ -27,7 +29,7 @@ export function ExtractedDocument({
     ? metadata.ocrWarnings
     : [];
   return (
-    <details className="extracted-document">
+    <details id={id} className="extracted-document">
       <summary>
         <span aria-hidden="true">▤</span>
         <span>

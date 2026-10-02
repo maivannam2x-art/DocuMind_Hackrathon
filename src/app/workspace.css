@@ -728,3 +728,42 @@
 .activity-panel li span { flex:1; overflow-wrap:anywhere; }
 .activity-panel small { display:block; color:#656575; }
 .activity-panel em { font-style:normal; font-size:13px; }
+
+/* Let flex/grid children shrink; prose wraps while code and tables scroll locally. */
+.rich-text, .block-content, .content-block, .result-column, .result-article,
+.article-section > div, .takeaway-list > div > div, .summary-section > div,
+.conclusion-highlight > div, .chat-message, .source-reading-view,
+.review-main, .review-side, .source-original, .detail-content {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.rich-text code, .result-list code { white-space: break-spaces; overflow-wrap: anywhere; }
+.content-block pre, .diagram-view pre, .block-content pre {
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  white-space: pre;
+}
+.table-scroll, .result-table-wrap { max-width: 100%; min-width: 0; overflow-x: auto; }
+.validation-location { display: block; margin-bottom: 4px; color: inherit; }
+.validation-message .text-button { display: block; margin-top: 6px; text-align: left; }
+.extracted-document { scroll-margin-top: 24px; }
+.activity-panel h3, .source-files-panel h3 { margin: 0 0 8px; font-size: 15px; }
+.activity-panel ul { list-style: none; margin-bottom: 0; }
+.activity-panel li span { min-width: 0; }
+.activity-panel li em { flex: 0 0 115px; }
+.source-files-panel { margin-bottom: 18px; padding: 16px 20px; }
+.source-files-panel > p { margin: 0 0 12px; color: #656575; font-size: 13px; }
+.source-files-panel ul { list-style: none; padding: 0; margin: 0; max-height: 280px; overflow: auto; }
+.source-files-panel li { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid #eee; }
+.source-files-panel li > div { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.source-files-panel small { display: block; color: #656575; margin-top: 4px; }
+@media (max-width: 600px) {
+  .activity-panel li { flex-wrap: wrap; gap: 6px; }
+  .activity-panel li span { flex-basis: calc(100% - 80px); }
+  .activity-panel li em { flex-basis: 100%; padding-left: 80px; }
+  .source-files-panel li { align-items: flex-start; flex-direction: column; }
+}
+.validation-message, .validation-message > span { min-width: 0; overflow-wrap: anywhere; }
+.code-view { max-width: 100%; min-width: 0; overflow-x: auto; white-space: pre; }

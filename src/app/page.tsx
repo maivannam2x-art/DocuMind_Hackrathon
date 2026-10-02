@@ -1,4 +1,5 @@
 "use client";
+import { SourceFilesPanel } from "@/components/source-files-panel";
 import { ActivityPanel } from "@/components/activity-panel";
 import { ResultTabs } from "@/components/workspace/result-tabs";
 import { AuthDialog } from "@/components/auth-dialog";
@@ -257,7 +258,10 @@ export default function Home() {
           )}
 
           {screen !== "input" && screen !== "history" && (
-            <ActivityPanel items={workspace.activities} />
+            <>
+              <ActivityPanel items={workspace.activities} />
+              <SourceFilesPanel workspace={workspace} />
+            </>
           )}
 
           {error && (

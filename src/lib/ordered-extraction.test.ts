@@ -1,3 +1,4 @@
+vi.mock("./model-health", () => ({ modelHealthEvent: async () => ({ allowed: true, generation: 0, failures: 0, openUntil: null, retryAfter: 0 }) }));
 import { testCatalog } from "./testing-gemini";
 import { resetModelCache } from "./gemini-routing";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -340,4 +341,18 @@ it("processes three PDF pages concurrently and retains document order across che
   );
   expect(final.complete).toBe(true);
   expect(final.text).toBe("Page-1\n\nPage-2\n\nPage-3\n\nPage-4");
+});
+it("reports the actual failed PDF page when a parallel batch contains other successful pages", async () => {
+  process.env.LLM_PROVIDER = "gemini"; process.env.GEMINI_API_KEY = "test";
+  resetModelCache();
+  const pdf = await PDFDocument.create(); pdf.addPage(); pdf.addPage(); pdf.addPage();
+  vi.stubGlobal("fetch", vi.fn(async (url, options) => {
+    if (String(url).includes("/models?") || String(url).endsWith("/models")) return testCatalog();
+    const body = String(options?.body ?? "");
+    const value = body.includes("trang 2") ? { blocks: null } : { blocks: [{ kind: "text", content: "Trang có nội dung kỹ thuật được trích xuất thành công." }] };
+    return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(value) }] } }] }));
+  }));
+  await expect(extractFileStep(new File([Uint8Array.from(await pdf.save())], "IT.pdf"))).rejects.toMatchObject({
+    code: "VISION_INVALID_RESPONSE", message: expect.stringContaining("IT.pdf · Trang 2"), details: { extractionLocation: { page: 2 } },
+  });
 });

@@ -1,4 +1,5 @@
 "use client";
+import type { ValidationIssue } from "@/lib/validation-location";
 import {
   workspaceFlow,
   recoveryScreen,
@@ -58,6 +59,8 @@ export type Topic = {
 export type ApiInput = {
   id: string;
   original_name: string;
+  byte_size?: number;
+  input_kind?: string;
   edited_text?: string | null;
   normalized_text?: string | null;
   original_text?: string | null;
@@ -88,9 +91,9 @@ export type ValidationReport = {
   totalWords: number;
   inputCount: number;
   chunkCount: number;
-  blockingErrors: Array<{ message: string }>;
-  warnings: Array<{ message: string }>;
-  notes: Array<{ message: string }>;
+  blockingErrors: ValidationIssue[];
+  warnings: ValidationIssue[];
+  notes: ValidationIssue[];
   inputs: InputReport[];
 };
 export type Analysis = {

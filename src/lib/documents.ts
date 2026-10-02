@@ -265,8 +265,18 @@ export async function extractFileStep(
         processExtractionUnit(unit, name, prepared?.pdf, analysisId),
       ),
     );
-    const failed = results.find((r) => r.status === "rejected");
-    if (failed?.status === "rejected") throw failed.reason;
+    const failedIndex = results.findIndex((r) => r.status === "rejected");
+    const failed = results[failedIndex];
+    if (failed?.status === "rejected") {
+      const unit = batch[failedIndex];
+      const location = unit.kind === "page" ? { page: unit.page } : { unit: state.nextUnit + failedIndex + 1 };
+      const label = unit.kind === "page" ? `Trang ${unit.page}` : `Khối nguồn ${state.nextUnit + failedIndex + 1}`;
+      const cause = failed.reason;
+      throw new ApiError(cause instanceof ApiError ? cause.status : 422,
+        cause instanceof ApiError ? cause.code : "DOCUMENT_EXTRACTION_FAILED",
+        `${name} · ${label}: ${cause instanceof Error ? cause.message : "Không đọc được nội dung."}`,
+        { extractionLocation: location });
+    }
     for (const result of results) {
       if (result.status !== "fulfilled") continue;
       const blocks = result.value;
@@ -284,7 +294,7 @@ export async function extractFileStep(
       ).length;
       if (blocks.some((b) => b.kind === "description"))
         state.warnings.push(
-          `Đơn vị ${state.nextUnit + 1}: một sơ đồ/công thức chỉ có mô tả; cần đối chiếu nguồn.`,
+          `${units[state.nextUnit]?.kind === "page" ? `Trang ${(units[state.nextUnit] as { page: number }).page}` : `Đơn vị ${state.nextUnit + 1}`}: một sơ đồ/công thức chỉ có mô tả; cần đối chiếu nguồn.`,
         );
       const content = serializeSourceBlocks(blocks);
       if (content) pieces.push(content);

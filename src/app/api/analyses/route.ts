@@ -80,7 +80,14 @@ export async function POST(request: NextRequest) {
       });
     };
     const storageMimeType = (mimeType: string) => ["application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "image/png", "image/jpeg"].includes(mimeType) ? mimeType : "text/plain";
-    if (body.text?.trim()) addTextInput(body.text, "Nội dung đã dán", "pasted_text", "text/plain", Buffer.byteLength(body.text));
+    if (body.text?.trim()) {
+      const prefix = identity.userId ? `users/${identity.userId}` : `guests/${identity.guestHash}`;
+      const sourcePath = `${prefix}/${analysis.id}/${randomUUID()}.txt`;
+      const { error: sourceError } = await db.storage.from("analysis-inputs").upload(sourcePath, Buffer.from(body.text), { contentType: "text/plain", upsert: false });
+      if (sourceError) throw new ApiError(503, "FILE_STORAGE_FAILED", "Không lưu được bản gốc nội dung đã dán. Hãy thử lại.");
+      uploadedPaths.push(sourcePath);
+      addTextInput(body.text, "Nội dung đã dán.txt", "pasted_text", "text/plain", Buffer.byteLength(body.text), sourcePath);
+    }
     const uploadSpecs: Array<{ inputId: string; name: string; byteSize: number; mimeType: string; storagePath: string }> = [];
     for (const spec of fileSpecs) {
       const mimeType = mimeTypeForFilename(spec.name);

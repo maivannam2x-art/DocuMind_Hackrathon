@@ -33,11 +33,12 @@ export async function startActivity(
 export async function finishActivity(
   id: string | null,
   status: "succeeded" | "failed",
+  label?: string,
 ) {
   if (!id) return;
   const { error } = await getAdminDb()
     .from("analysis_activity")
-    .update({ status, completed_at: new Date().toISOString() })
+    .update({ status, completed_at: new Date().toISOString(), ...(label ? { label: label.slice(0, 300) } : {}) })
     .eq("id", id);
   if (error) console.error("Không cập nhật được nhật ký tác vụ", error.code);
 }

@@ -52,3 +52,9 @@ Chạy tiếp `07_resumable_activity.sql`, rồi `08_expanded_it_catalog.sql` sa
 ## Bổ sung ảnh và gói Markdown ngày 02/10/2026
 
 PNG công thức/sơ đồ lưu ở `analysis-assets`; bảng `generated_assets` chỉ giữ nguồn, metadata và đường dẫn. Không ghi ảnh base64 vào database. Khi nâng cấp project đang chạy, áp dụng `supabase/migrations/20261002170651_allow_portable_markdown_exports.sql` để bucket `analysis-exports` nhận ZIP Markdown kèm ảnh. Bản bootstrap cài mới đã bổ sung cập nhật này. Audit chỉ đọc nằm ở `database/05_visual_assets_audit.sql`; chi tiết luồng và kiểm thử ở `docs/VISUAL_EXPORT_AUDIT_2026-10-02.md`.
+
+## Model cooldown và bản gốc đầu vào
+
+Áp dụng tiếp `supabase/migrations/20261002173217_gemini_model_circuit_breaker.sql` trên project đang chạy. Bootstrap cài mới đã chứa migration này. Bảng `gemini_model_health` và RPC chỉ dành cho service role; trạng thái dùng chung theo hash khóa API/model, không lưu khóa API. Sau 5 lỗi liên tiếp, model bị bỏ qua 300 giây. Sau cooldown chỉ một lượt probe trong 90 giây được gọi; thành công mở lại, lỗi khóa tiếp 5 phút. Completion cũ không mở khóa model đã bị khóa.
+
+File gốc tải trực tiếp vào bucket private `analysis-inputs` trước khi ingest. Nội dung đã dán mới cũng được lưu thành TXT nguyên bản; các phiên cũ không có file gốc không được tái tạo giả từ văn bản đã chỉnh sửa. API `/api/analyses/{id}/inputs/{inputId}/source` kiểm tra quyền sở hữu trước khi cấp URL 10 phút. UI luôn xin URL mới khi mở bản gốc từ phiên/lịch sử.

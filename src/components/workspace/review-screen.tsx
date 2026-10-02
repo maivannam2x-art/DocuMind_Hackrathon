@@ -1,5 +1,6 @@
 "use client";
 import type { WorkspaceContext, OutlineItem } from "@/hooks/use-workspace";
+import { locateIssue, type ValidationIssue } from "@/lib/validation-location";
 import { ExtractedDocument } from "@/components/extracted-document";
 
 export function ReviewScreen({ workspace }: { workspace: WorkspaceContext }) {
@@ -12,6 +13,7 @@ export function ReviewScreen({ workspace }: { workspace: WorkspaceContext }) {
     topicMode,
     quizEnabled,
     setReviewDirty,
+    reviewDirty,
     depth,
     inputRows,
     inputTexts,
@@ -25,6 +27,17 @@ export function ReviewScreen({ workspace }: { workspace: WorkspaceContext }) {
     OutlineTree,
     Icon,
   } = workspace;
+
+  const issueContent = (item: ValidationIssue) => {
+    const issue = locateIssue(item, inputRows.find(input => input.id === item.inputId)?.original_name);
+    return <span><strong className="validation-location">{issue.location}</strong>{issue.message}
+      {issue.inputId && <button type="button" className="text-button" onClick={() => {
+        const document = window.document.getElementById(`input-${issue.inputId}`);
+        if (document instanceof HTMLDetailsElement) document.open = true;
+        document?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }}>Xem vị trí trong tài liệu ↓</button>}
+    </span>;
+  };
 
   return (
     <div className="review-layout">
@@ -58,19 +71,19 @@ export function ReviewScreen({ workspace }: { workspace: WorkspaceContext }) {
         {(report?.blockingErrors ?? []).map((item, i) => (
           <div className="validation-message validation-error" key={`e-${i}`}>
             <b>!</b>
-            <span>{item.message}</span>
+            {issueContent(item)}
           </div>
         ))}
         {(report?.warnings ?? []).map((item, i) => (
           <div className="validation-message validation-warning" key={`w-${i}`}>
             <b>i</b>
-            <span>{item.message}</span>
+            {issueContent(item)}
           </div>
         ))}
         {(report?.notes ?? []).map((item, i) => (
           <div className="validation-message validation-note" key={`n-${i}`}>
             <b>✓</b>
-            <span>{item.message}</span>
+            {issueContent(item)}
           </div>
         ))}
         <div className="review-section-title">
@@ -83,6 +96,7 @@ export function ReviewScreen({ workspace }: { workspace: WorkspaceContext }) {
         {inputRows.map((input) => (
           <ExtractedDocument
             key={input.id}
+            id={`input-${input.id}`}
             name={input.original_name || "Tài liệu"}
             text={inputTexts[input.id] ?? ""}
             sourceUrl={input.sourceUrl}
@@ -151,7 +165,7 @@ export function ReviewScreen({ workspace }: { workspace: WorkspaceContext }) {
             </button>
             <button
               className="button button-primary"
-              disabled={busy || !analysisId}
+              disabled={busy || !analysisId || (report?.valid === false && !reviewDirty)}
               onClick={() => void confirmAndRun()}
             >
               {busy ? (
