@@ -450,6 +450,15 @@ export function useWorkspace() {
   }, [toast]);
 
   useEffect(() => {
+    const id = new URL(window.location.href).searchParams.get("analysis");
+    if (id && /^[0-9a-f-]{36}$/i.test(id)) {
+      setScreen("processing");
+      setBusy(true);
+      setLoadingLabel("Đang khôi phục phiên và kiểm tra tiến độ đã lưu...");
+    }
+  }, [setScreen]);
+
+  useEffect(() => {
     api<Topic[]>("/api/topics")
       .then((response) => setTopics(Array.isArray(response) ? response : []))
       .catch(() => undefined);
@@ -705,7 +714,11 @@ export function useWorkspace() {
       if (pendingUploads.length)
         await completeFileUploadAndReview(analysisId, pendingUploads);
       else {
-        setLoadingLabel("Đang trích xuất lại nội dung tệp...");
+        setLoadingLabel(
+          inputRows.every((input) => input.status === "extracted")
+            ? "Hệ thống đang kiểm tra và dựng cấu trúc từ nội dung đã đọc..."
+            : "Đang tiếp tục đọc các phần chưa hoàn tất từ checkpoint...",
+        );
         await ingestAllFiles(analysisId);
         setPendingIngestId(null);
         await refreshReview(analysisId);
@@ -1336,7 +1349,9 @@ export function useWorkspace() {
       : screen === "review"
         ? 1
         : screen === "processing"
-          ? 2
+          ? analysis?.confirmed_at
+            ? 2
+            : 0
           : 3;
   const resultHeadings: Record<string, string> = {
     overview: "Tổng quan tài liệu",
@@ -1353,7 +1368,9 @@ export function useWorkspace() {
       : screen === "review"
         ? "Kiểm tra tài liệu trước khi xử lý"
         : screen === "processing"
-          ? "Đang xây dựng workspace học tập"
+          ? analysis?.confirmed_at
+            ? "Đang xây dựng workspace học tập"
+            : "Đang chuẩn bị đầu vào"
           : screen === "history"
             ? "Lịch sử phân tích"
             : (resultHeadings[activeResultTab] ?? resultHeadings.overview);

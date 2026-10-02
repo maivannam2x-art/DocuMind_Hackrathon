@@ -18,6 +18,32 @@ export function ProcessingScreen({
     pendingIngestId,
     setScreen,
   } = workspace;
+  const confirmed = Boolean(analysis?.confirmed_at);
+  const readComplete = Boolean(
+    progress && progress.completed >= progress.total,
+  );
+  const steps = confirmed
+    ? [
+        { label: "Xác nhận tài liệu", done: true },
+        { label: "Nhận diện chủ đề", done: Boolean(progress) },
+        {
+          label: progress
+            ? `Phân tích ${progress.total} phần nội dung`
+            : "Phân tích từng phần nội dung",
+          done: readComplete,
+        },
+        {
+          label: analysis?.quiz_enabled
+            ? "Tổng hợp kết quả và tạo quiz"
+            : "Tổng hợp kết quả",
+          done: false,
+        },
+      ]
+    : [
+        { label: "Đọc văn bản, bảng, ảnh và công thức", done: readComplete },
+        { label: "Kiểm tra và dựng cấu trúc tài liệu", done: false },
+        { label: "Chờ bạn rà soát và xác nhận", done: false },
+      ];
 
   return (
     <div className="processing-wrap">
@@ -56,7 +82,9 @@ export function ProcessingScreen({
             {progress
               ? `${progress.completed}/${progress.total} phần · ${Math.round((progress.completed / progress.total) * 100)}%`
               : busy
-                ? "Đang phân tích nội dung"
+                ? confirmed
+                  ? "Đang phân tích nội dung"
+                  : "Đang đọc và kiểm tra đầu vào"
                 : "Đang chờ tiếp tục"}
           </span>
           <small>
@@ -71,27 +99,7 @@ export function ProcessingScreen({
           </p>
         )}
         <ol className="processing-steps">
-          {[
-            {
-              label: analysis?.confirmed_at
-                ? "Xác nhận tài liệu"
-                : "Đọc văn bản, bảng, ảnh và công thức",
-              done: Boolean(analysis?.confirmed_at) || Boolean(progress),
-            },
-            { label: "Nhận diện chủ đề", done: Boolean(progress) },
-            {
-              label: progress
-                ? `Phân tích ${progress.total} phần nội dung`
-                : "Phân tích từng phần nội dung",
-              done: Boolean(progress && progress.completed >= progress.total),
-            },
-            {
-              label: analysis?.quiz_enabled
-                ? "Tổng hợp kết quả và tạo quiz"
-                : "Tổng hợp kết quả",
-              done: false,
-            },
-          ].map((step, index, all) => {
+          {steps.map((step, index, all) => {
             const current =
               !step.done && all.slice(0, index).every((item) => item.done);
             return (
