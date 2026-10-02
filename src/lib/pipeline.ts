@@ -6,6 +6,7 @@ import { assertResult } from "@/lib/validation";
 import { generateLlm, loadPrompt, type LlmPurpose, type LlmResult } from "@/lib/llm";
 import { createSourceGroundedFallback, normalizeQuizCandidates, type QuizCandidate } from "@/lib/quiz";
 import { fallbackOverview, summaryContext, validatedOverview, type SummarySection } from "@/lib/overview";
+import { preserveSourceVisuals } from "@/lib/source-content";
 
 export type ChunkRow = { id: string; input_id: string; chunk_index: number; title: string | null; content: string; status: string; retry_count: number; generated_content?: unknown };
 type PromptRow = { id: string; system_prompt: string; user_prompt_template: string; output_schema: unknown; model_config: Record<string, unknown> };
@@ -203,6 +204,7 @@ export async function runAnalysis(identity: RequestIdentity, analysisId: string)
           llm = await invokeAndLog(analysisId, chunk.id, "repair", repairPrompt, repairText, chunk.retry_count + 2);
           value = assertResult(llm.value);
         }
+        value = assertResult(preserveSourceVisuals(value, chunk.content, chunk.title || "Tài liệu"));
         if (claimed.quiz_enabled) {
           try {
             const quizPrompt = await loadPrompt("quiz_generation", itContext.topicId, itContext.specializationId);

@@ -3,6 +3,7 @@
 import { ChangeEvent, FormEvent, ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { ResultBlockView } from "@/components/result-block";
+import { ExtractedDocument } from "@/components/extracted-document";
 import { AuthDialog } from "@/components/auth-dialog";
 import type { ResultBlock } from "@/lib/result-content";
 import { fallbackOverview, validatedOverview, type Overview } from "@/lib/overview";
@@ -241,9 +242,9 @@ export default function Home() {
   async function ingestAllFiles(id: string) {
     let nextStep: string;
     do {
-      const response = await api<{ nextStep: string; remainingFiles: number }>(`/api/analyses/${id}/ingest`, { method: "POST" });
+      const response = await api<{ nextStep: string; remainingFiles: number; progress?: { nextUnit: number; totalUnits: number } }>(`/api/analyses/${id}/ingest`, { method: "POST" });
       nextStep = response.nextStep;
-      if (nextStep === "ingest") setLoadingLabel(`Đang đọc tệp tiếp theo · còn ${response.remainingFiles} tệp...`);
+      if (nextStep === "ingest") setLoadingLabel(response.progress ? `Đang đọc tài liệu · ${response.progress.nextUnit}/${response.progress.totalUnits} phần · còn ${response.remainingFiles} tệp...` : `Đang đọc tệp tiếp theo · còn ${response.remainingFiles} tệp...`);
     } while (nextStep === "ingest");
   }
 
@@ -392,6 +393,10 @@ export default function Home() {
       setReport(details.analysis.validation_report ?? null);
       if (item.status === "completed") await loadResult(item.id, details.analysis);
       else if (["draft", "needs_review"].includes(item.status)) {
+        if (details.inputs.some(input => input.status === "staged" || input.metadata?.errorCode)) {
+          setPendingIngestId(item.id); setLoadingLabel("Đang tiếp tục đọc tài liệu đã tải lên...");
+          await ingestAllFiles(item.id); setPendingIngestId(null); await refreshReview(item.id); return;
+        }
         if (details.analysis.validation_report?.inputs?.length) setOutline(details.analysis.validation_report.inputs.flatMap(input => input.structure));
         setScreen("review");
       } else if (item.status === "failed") {
@@ -471,9 +476,9 @@ export default function Home() {
         if (diagrams.length) {
           setLoadingLabel("Đang chuẩn bị ảnh sơ đồ cho báo cáo...");
           const { default: mermaid } = await import("mermaid");
-          mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "neutral", suppressErrorRendering: true });
-          let sourceOnly = Math.max(0, diagrams.length - 24);
-          for (const [index, source] of diagrams.slice(0, 24).entries()) {
+          mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "neutral", htmlLabels: false, flowchart: { htmlLabels: false }, suppressErrorRendering: true });
+          let sourceOnly = 0;
+          for (const [index, source] of diagrams.entries()) {
             try {
               if (source.length > 10000 || !(await mermaid.parse(source, { suppressErrors: true }))) { sourceOnly++; continue; }
               const { svg } = await mermaid.render(`export-diagram-${Date.now()}-${index}`, source, document.createElement("div"));
@@ -588,7 +593,7 @@ export default function Home() {
               {files.length > 0 && <div className="file-list">{files.map((file, index) => <div className="file-row" key={`${file.name}-${index}`}><span className="file-type">{file.name.split(".").pop()?.toUpperCase().slice(0, 4)}</span><div className="file-meta"><strong>{file.name}</strong><small>{(file.size / 1024).toFixed(0)} KB</small></div><button type="button" onClick={() => setFiles(current => current.filter((_, i) => i !== index))} aria-label={`Xóa ${file.name}`}>×</button></div>)}</div>}
               <div className="or-divider"><span>HOẶC DÁN NỘI DUNG</span></div>
               <label className="field pasted-field"><span>Nội dung văn bản</span><textarea value={text} onChange={event => setText(event.target.value)} rows={7} maxLength={500000} placeholder="Dán nội dung tài liệu, ghi chú hoặc code vào đây..." /><small>{text.length.toLocaleString("vi-VN")} ký tự · Bạn có thể kết hợp văn bản và tệp.</small></label>
-              <div className="privacy-note"><Icon>◉</Icon><span>Tài liệu riêng tư, chỉ bạn truy cập được. AI chỉ xử lý sau khi bạn kiểm tra và xác nhận.</span></div>
+              <div className="privacy-note"><Icon>◉</Icon><span>Tài liệu riêng tư. AI đọc hình và công thức để tạo bản xem trước; phân tích nội dung sau khi bạn xác nhận.</span></div>
               <button className="button button-primary button-full" disabled={busy || (!text.trim() && files.length === 0)} type="submit">{busy ? <><span className="spinner" />{loadingLabel || "Đang chuẩn bị..."}</> : <>Kiểm tra tài liệu <span>→</span></>}</button>
               <p className="button-footnote">Bước tiếp theo cho phép bạn xem và chỉnh sửa nội dung đã trích xuất.</p>
             </section>
@@ -602,14 +607,14 @@ export default function Home() {
               {(report?.warnings ?? []).map((item, i) => <div className="validation-message validation-warning" key={`w-${i}`}><b>i</b><span>{item.message}</span></div>)}
               {(report?.notes ?? []).map((item, i) => <div className="validation-message validation-note" key={`n-${i}`}><b>✓</b><span>{item.message}</span></div>)}
               <div className="review-section-title"><div><h3>Nội dung đã trích xuất</h3><p>Chỉnh sửa nếu nội dung thiếu hoặc chưa chính xác.</p></div><span className="editable-label">Có thể chỉnh sửa</span></div>
-              {inputRows.map(input => <details className="extracted-document" key={input.id}><summary><Icon>▤</Icon><span><strong>{input.original_name || "Tài liệu"}</strong><small>{(inputTexts[input.id] ?? "").length.toLocaleString("vi-VN")} ký tự · {(inputTexts[input.id] ?? "").slice(0, 135).replace(/\s+/g, " ")}</small></span><b>Chỉnh sửa <span aria-hidden="true">⌄</span></b></summary><div className="extracted-editor">{input.previewUrl && <img className="source-image-preview" src={input.previewUrl} alt={`Ảnh gốc: ${input.original_name || "tài liệu"}`} />}{["gemini_vision", "gemini_vision_pdf_ocr", "docx_text_and_gemini_vision"].includes(String(input.metadata?.extraction)) && <p className="extraction-hint">AI đã nhận diện chữ, công thức và sơ đồ. Hãy đối chiếu với hình gốc trước khi xác nhận.</p>}{Number(input.metadata?.ignoredEmbeddedImages ?? 0) > 0 && <p className="validation-message validation-warning">DOCX có {String(input.metadata?.ignoredEmbeddedImages)} hình chưa được đọc; bổ sung nội dung còn thiếu trước khi xác nhận.</p>}{Array.isArray(input.metadata?.ocrWarnings) && input.metadata.ocrWarnings.map((warning, index) => <p className="validation-message validation-warning" key={index}>{String(warning)}</p>)}<textarea aria-label={`Nội dung trích xuất: ${input.original_name || "tài liệu"}`} value={inputTexts[input.id] ?? ""} onChange={event => setInputTexts(current => ({ ...current, [input.id]: event.target.value }))} rows={14} maxLength={500000} /><small>Sửa nội dung rồi nhấn “Lưu chỉnh sửa” để phân chia lại cấu trúc.</small></div></details>)}
+              {inputRows.map(input => <ExtractedDocument key={input.id} name={input.original_name || "Tài liệu"} text={inputTexts[input.id] ?? ""} previewUrl={input.previewUrl} metadata={input.metadata} headings={(() => { const titles = (nodes: OutlineItem[]): string[] => nodes.flatMap(node => [node.title, ...titles(node.children)]); return titles(report?.inputs.find(row => row.id === input.id)?.structure ?? []); })()} onChange={value => setInputTexts(current => ({ ...current, [input.id]: value }))} />)}
               <div className="review-section-title outline-heading"><div><h3>Cấu trúc được đề xuất</h3><p>Mở từng mục để xem mục con. Các mục ngắn được gom chung khi gửi AI; {report?.chunkCount ?? 0} phần xử lý không phải số lần chia đề mục.</p></div></div>
               <div className="outline-list">{report?.inputs.map(input => <div className="outline-document" key={input.id}><h4>{input.name || "Tài liệu"}</h4><OutlineTree items={input.structure} /></div>)}{!report && <OutlineTree items={allOutline} />}{allOutline.length === 0 && <div className="empty-inline">Lưu nội dung chỉnh sửa để cập nhật cấu trúc tài liệu.</div>}</div>
               <div className="review-actions"><button className="button button-quiet" disabled={busy} onClick={() => { setScreen("input"); setError(""); }}>← Quay lại</button><div><button className="button button-secondary" disabled={busy} onClick={() => void saveReview()}>{busy ? "Đang lưu..." : "Lưu chỉnh sửa"}</button><button className="button button-primary" disabled={busy || !analysisId} onClick={() => void confirmAndRun()}>{busy ? "Đang xử lý..." : <>Xác nhận và xử lý <span>→</span></>}</button></div></div>
             </section>
             <aside className="review-side">
               <div className="panel side-summary"><div className="panel-kicker">TÓM TẮT PHIÊN</div><h3>{title || files[0]?.name || "Tài liệu học tập"}</h3><div className="summary-meta"><span>Chủ đề</span><strong>{topicMode === "IT" ? "Công nghệ thông tin" : topicMode === "GENERAL" ? "Chủ đề chung" : "Tự nhận diện"}</strong></div><div className="summary-meta"><span>Mức phân tích</span><strong>{depth === "quick" ? "Nhanh" : depth === "deep" ? "Chuyên sâu" : "Tiêu chuẩn"}</strong></div><div className="summary-meta"><span>Quiz ôn tập</span><strong>{quizEnabled ? "Có" : "Không"}</strong></div><div className="summary-divider" /><p><Icon>✦</Icon> Bạn có thể chỉnh sửa nội dung trích xuất trước khi xác nhận.</p></div>
-              <div className="panel review-assurance"><span className="assurance-icon">✓</span><div><strong>Chưa gửi đến AI</strong><p>Tài liệu chỉ được xử lý sau khi bạn nhấn “Xác nhận và xử lý”.</p></div></div>
+              <div className="panel review-assurance"><span className="assurance-icon">✓</span><div><strong>Chưa phân tích nội dung</strong><p>Hình và công thức có thể đã được AI nhận diện. Phân tích học tập chỉ bắt đầu sau khi bạn xác nhận.</p></div></div>
             </aside>
           </div>}
 

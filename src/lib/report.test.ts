@@ -18,6 +18,15 @@ const report = {
 };
 
 describe("report export formats", () => {
+  it("exports typed tables as actual Word/HTML tables and retains all cells in PDF", async () => {
+    const tableReport = { title: "So sánh giao thức", sections: [{ title: "TCP và UDP", blocks: [{ type: "table", contentType: "table" as const, content: { headers: ["Giao thức", "Đặc điểm"], rows: [["TCP", "Kiểm soát lỗi và thứ tự"], ["UDP", "Không bảo đảm giao nhận"]] } }] }] };
+    expect(reportToHtml(tableReport)).toContain("<thead>");
+    expect(reportToMarkdown(tableReport)).toContain("| TCP | Kiểm soát lỗi và thứ tự |");
+    const zip = await JSZip.loadAsync(await reportToDocx(tableReport));
+    expect(await zip.file("word/document.xml")!.async("string")).toContain("<w:tbl>");
+    const pdf = await pdfParse(new Uint8Array(await reportToPdf(tableReport)) as Buffer);
+    expect(pdf.text).toContain("Kiểm soát lỗi và thứ tự"); expect(pdf.text).toContain("Không bảo đảm giao nhận");
+  });
   it("renders readable HTML and Markdown with an explicit JSON label", () => {
     expect(reportToMarkdown(report)).toContain("Dữ liệu JSON:");
     expect(reportToMarkdown(report)).toContain("## Kết luận");

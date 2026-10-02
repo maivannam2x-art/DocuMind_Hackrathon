@@ -3,6 +3,7 @@ import { getAnalysis, getIdentity } from "@/lib/auth";
 import { getAdminDb, envInt } from "@/lib/db";
 import { chunkText, normalizeText, outlineText } from "@/lib/documents";
 import { ApiError, errorResponse, ok } from "@/lib/http";
+import { sourceContentBlocks } from "@/lib/source-content";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -21,7 +22,8 @@ export async function POST(request: NextRequest, context: Context) {
     const totalText = inputs.map((input: Record<string, string | null>) => input.edited_text ?? input.normalized_text ?? input.original_text ?? "").join("\n\n");
     const totalChars = totalText.length;
     const rules: Array<{ code: string; severity: string; message: string; inputId?: string }> = [];
-    if (totalChars < 40) rules.push({ code: "input_text_required", severity: "error", message: "Nội dung trích xuất quá ngắn, cần ít nhất 40 ký tự." });
+    const hasVisualSource = sourceContentBlocks(totalText).some(block => ["latex", "mermaid", "plantuml"].includes(block.contentType ?? ""));
+    if (totalChars < 40 && !hasVisualSource) rules.push({ code: "input_text_required", severity: "error", message: "Chưa có đủ văn bản, sơ đồ hoặc công thức để phân tích. Ảnh minh họa thuần túy được bỏ qua." });
     if (totalChars > maxChars) rules.push({ code: "input_max_characters", severity: "error", message: `Tổng nội dung vượt ${maxChars.toLocaleString()} ký tự.` });
     if (totalChars < 500) rules.push({ code: "input_low_text", severity: "warning", message: "Nội dung ngắn; kết quả có thể ít chi tiết." });
     const chunkRows: Array<Record<string, unknown>> = [];
@@ -29,10 +31,21 @@ export async function POST(request: NextRequest, context: Context) {
     let headingCount = 0;
     for (const input of inputs as Array<Record<string, unknown> & { id: string; original_name: string; edited_text?: string | null; normalized_text?: string | null; original_text?: string | null }>) {
       const text = normalizeText(input.edited_text ?? input.normalized_text ?? input.original_text ?? "");
-      if (text.length < 40) {
+      const metadata = input.metadata as Record<string, unknown> | null;
+      if (input.status === "staged" || metadata?.errorCode) rules.push({ code: "extraction_incomplete", severity: "error", message: `Tệp ${input.original_name} chưa đọc xong. Tiếp tục đọc hoặc tải lại tệp trước khi xác nhận.`, inputId: input.id });
+      if (Array.isArray(metadata?.ocrWarnings)) for (const warning of metadata.ocrWarnings) rules.push({ code: "visual_review_needed", severity: "warning", message: `${input.original_name}: ${String(warning)}`, inputId: input.id });
+      if (Number(metadata?.skippedIllustrations) > 0) rules.push({ code: "illustrations_skipped", severity: "info", message: `${input.original_name}: bỏ qua ${metadata?.skippedIllustrations} ảnh minh họa không chứa dữ liệu kỹ thuật.`, inputId: input.id });
+      const hasVisual = sourceContentBlocks(text).some(block => ["latex", "mermaid", "plantuml"].includes(block.contentType ?? ""));
+      if (text.length < 40 && !hasVisual) {
+        if (Number(metadata?.skippedIllustrations) > 0 && !text) continue;
         rules.push({ code: "input_text_required", severity: "error", message: `Không trích xuất đủ văn bản từ ${input.original_name || "đầu vào"}.`, inputId: input.id });
       }
-      const chunks = chunkText(text);
+      let chunks: ReturnType<typeof chunkText> = [];
+      try { chunks = chunkText(text); }
+      catch (cause) {
+        if (!(cause instanceof ApiError)) throw cause;
+        rules.push({ code: cause.code, severity: "error", message: cause.message, inputId: input.id });
+      }
       const structure = outlineText(text);
       headingCount += structure.filter(item => item.title !== "Tài liệu" && item.title !== "Mở đầu").length;
       for (const chunk of chunks) chunkRows.push({

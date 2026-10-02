@@ -261,3 +261,14 @@ body.dialog-open{overflow:hidden}
 .load-more{display:block;margin:18px auto 5px;min-width:190px}
 .diagram-view>summary{cursor:pointer;font-size:11px;font-weight:700;color:#705bd1;background:#f7f5ff;border:1px solid #e9e3ff;border-radius:8px;padding:11px 13px}
 .diagram-view[open]>summary{margin-bottom:8px}
+
+/* Read the prepared source before opening its editor. */
+.source-mode-switch { display:flex; gap:10px; flex-wrap:wrap; margin:12px 0 20px; }
+.source-reading-view { border:1px solid #e8e6ef; border-radius:14px; background:#fff; padding:24px; max-height:680px; overflow:auto; }
+.source-reading-view .content-block { margin:0 0 18px; }
+.source-reading-view .content-paragraph > .block-type { display:none; }
+.source-reading-view .block-content { font-size:15px; line-height:1.85; white-space:pre-wrap; overflow-wrap:anywhere; color:#34384d; }
+.source-heading { color:#51419a; font-size:18px; line-height:1.5; margin:24px 0 14px; padding-bottom:10px; border-bottom:1px solid #eeeaf5; }
+.source-heading:first-child { margin-top:0; }
+.source-reading-view .formula-view { overflow:auto; padding:20px 8px; }
+@media(max-width:640px) { .source-reading-view { padding:16px; } .source-mode-switch .button { flex:1; } }

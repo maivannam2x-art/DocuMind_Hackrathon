@@ -1,9 +1,9 @@
 import path from "node:path";
 import PDFDocument from "pdfkit";
-import { Document, HeadingLevel, ImageRun, Packer, Paragraph } from "docx";
+import { Document, HeadingLevel, ImageRun, Packer, Paragraph, Table, TableRow, TableCell, WidthType } from "docx";
 import katex from "katex";
 import { renderFormulaPng } from "@/lib/formula";
-import { blockToPlainText, type ResultBlock } from "@/lib/result-content";
+import { blockToPlainText, tableValues, type ResultBlock } from "@/lib/result-content";
 
 export type ReportSection = { title: string; summary?: string; blocks: ResultBlock[] };
 export type ReportDocument = { title?: string; summary?: string; conclusion?: string; sections?: ReportSection[] };
@@ -55,6 +55,10 @@ function scaleDiagram(width: number, height: number, maxWidth: number, maxHeight
 
 function markdownBlock(block: ResultBlock) {
   const text = blockToPlainText(block);
+  if (block.contentType === "table" || block.type === "table") {
+    const table = tableValues(block.content);
+    if (table) return [table.headers, table.headers.map(() => "---"), ...table.rows].map(row => `| ${row.map(cell => cell.replaceAll("|", "\\|").replaceAll("\n", " ")).join(" | ")} |`).join("\n");
+  }
   if (isList(block)) return (Array.isArray(block.content) ? block.content : [block.content]).map(item => `- ${String(item)}`).join("\n");
   if (isCode(block)) return `\n\`\`\`\n${text}\n\`\`\``;
   if (block.contentType === "mermaid" || block.type === "mermaid") return `\n\`\`\`mermaid\n${text}\n\`\`\``;
@@ -75,6 +79,10 @@ export function reportToMarkdown(report: ReportDocument) {
 
 function htmlBlock(block: ResultBlock) {
   const text = blockToPlainText(block);
+  if (block.contentType === "table" || block.type === "table") {
+    const table = tableValues(block.content);
+    if (table) return `<table style="width:100%;border-collapse:collapse;margin:16px 0"><thead><tr>${table.headers.map(cell => `<th style="border:1px solid #dedbe8;padding:8px;background:#f4f1fb;text-align:left">${escapeHtml(cell)}</th>`).join("")}</tr></thead><tbody>${table.rows.map(row => `<tr>${row.map(cell => `<td style="border:1px solid #dedbe8;padding:8px">${escapeHtml(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+  }
   if (isList(block)) return `<ul>${(Array.isArray(block.content) ? block.content : [block.content]).map(item => `<li>${escapeHtml(String(item))}</li>`).join("")}</ul>`;
   if (block.contentType === "latex" || ["formula", "math", "equation"].includes(block.type)) {
     const math = typeof block.metadata?.latex === "string" ? block.metadata.latex : text;
@@ -123,6 +131,26 @@ export async function reportToPdf(report: ReportDocument): Promise<Buffer> {
     document.moveDown(0.3);
     if (section.summary) document.fontSize(10).fillColor("#55596c").text(section.summary, { lineGap: 3 });
     for (const block of section.blocks ?? []) {
+      if (block.contentType === "table" || block.type === "table") {
+        const table = tableValues(block.content);
+        if (table && table.headers.length <= 6) {
+          const width = 490 / table.headers.length;
+          const drawRow = (row: string[], header = false) => {
+            document.fontSize(9);
+            const height = Math.max(24, ...row.map(cell => document.heightOfString(cell, { width: width - 14, lineGap: 2 }) + 14));
+            if (height > 650) { document.fontSize(9).fillColor("#303247").text(row.map((cell, i) => `${table.headers[i]}: ${cell}`).join("\n"), { lineGap: 3 }); return; }
+            if (document.y + height > 780) { document.addPage(); if (!header) drawRow(table.headers, true); }
+            const top = document.y;
+            row.forEach((cell, i) => {
+              const left = 52 + i * width;
+              document.save().rect(left, top, width, height).fillAndStroke(header ? "#f4f1fb" : "#ffffff", "#dedbe8").restore();
+              document.fillColor(header ? "#5646aa" : "#303247").text(cell, left + 7, top + 7, { width: width - 14, lineGap: 2 });
+            });
+            document.x = 52; document.y = top + height;
+          };
+          document.moveDown(0.5); drawRow(table.headers, true); table.rows.forEach(row => drawRow(row)); document.moveDown(0.5); continue;
+        }
+      }
       const visual = embeddedVisualPng(block);
       if (visual) {
         const size = scaleDiagram(visual.width, visual.height, 490, 330);
@@ -163,12 +191,19 @@ export async function reportToPdf(report: ReportDocument): Promise<Buffer> {
 }
 
 export async function reportToDocx(report: ReportDocument): Promise<Buffer> {
-  const children: Paragraph[] = [new Paragraph({ text: report.title || "Báo cáo học tập", heading: HeadingLevel.TITLE })];
+  const children: Array<Paragraph | Table> = [new Paragraph({ text: report.title || "Báo cáo học tập", heading: HeadingLevel.TITLE })];
   if (report.summary) children.push(new Paragraph({ text: report.summary }));
   for (const section of report.sections ?? []) {
     children.push(new Paragraph({ text: section.title, heading: HeadingLevel.HEADING_1 }));
     if (section.summary) children.push(new Paragraph({ text: section.summary }));
     for (const block of section.blocks ?? []) {
+      if (block.contentType === "table" || block.type === "table") {
+        const table = tableValues(block.content);
+        if (table) {
+          children.push(new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: [table.headers, ...table.rows].map((row, i) => new TableRow({ tableHeader: i === 0, children: row.map(cell => new TableCell({ children: [new Paragraph(cell)] })) })) }));
+          continue;
+        }
+      }
       const visual = embeddedVisualPng(block);
       if (visual) {
         const scaled = scaleDiagram(visual.width, visual.height, 520, 360);

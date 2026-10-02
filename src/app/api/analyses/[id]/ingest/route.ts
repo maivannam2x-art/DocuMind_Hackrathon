@@ -1,7 +1,9 @@
 import { NextRequest } from "next/server";
 import { getAnalysis, getIdentity } from "@/lib/auth";
 import { getAdminDb } from "@/lib/db";
-import { extractFile } from "@/lib/documents";
+import { extractFileStep } from "@/lib/documents";
+import type { ExtractionProgress } from "@/lib/ordered-extraction";
+import { createHash } from "node:crypto";
 import { ApiError, errorResponse, ok } from "@/lib/http";
 
 type Context = { params: Promise<{ id: string }> };
@@ -12,6 +14,9 @@ type InputRow = {
   byte_size: number;
   storage_bucket: string | null;
   storage_path: string | null;
+  normalized_text: string | null;
+  metadata: Record<string, unknown> | null;
+  updated_at: string;
 };
 
 export const runtime = "nodejs";
@@ -27,7 +32,7 @@ export async function POST(request: NextRequest, context: Context) {
     }
     const db = getAdminDb();
     const { data: inputs, error } = await db.from("analysis_inputs")
-      .select("id,original_name,mime_type,byte_size,storage_bucket,storage_path")
+      .select("id,original_name,mime_type,byte_size,storage_bucket,storage_path,normalized_text,metadata,updated_at")
       .eq("analysis_id", id).in("status", ["staged", "error"]).order("position");
     if (error) throw new ApiError(500, "INPUT_LOAD_FAILED", "Không tải được danh sách tệp.", error.message);
 
@@ -50,18 +55,22 @@ export async function POST(request: NextRequest, context: Context) {
       }
       try {
         const file = new File([bytes], input.original_name, { type: input.mime_type ?? "application/octet-stream" });
-        const extracted = await extractFile(file);
-        const { error: saveError } = await db.from("analysis_inputs").update({
+        const sourceHash = createHash("sha256").update(bytes).digest("hex");
+        const checkpoint = input.metadata?.sourceHash === sourceHash ? input.metadata?.extractionProgress as ExtractionProgress | undefined : undefined;
+        const extracted = await extractFileStep(file, checkpoint, checkpoint ? input.normalized_text ?? "" : "");
+        const { data: saved, error: saveError } = await db.from("analysis_inputs").update({
           original_text: extracted.text,
           normalized_text: extracted.text,
-          status: "extracted",
-          metadata: extracted.metadata ?? { extraction: "text_parser" },
-        }).eq("id", input.id);
+          status: extracted.complete ? "extracted" : "staged",
+          metadata: { ...extracted.metadata, sourceHash },
+        }).eq("id", input.id).eq("updated_at", input.updated_at).select("id").maybeSingle();
         if (saveError) throw new ApiError(500, "INPUT_SAVE_FAILED", `Không lưu được nội dung trích xuất từ ${input.original_name}.`, saveError.message);
+        if (!saved) throw new ApiError(409, "EXTRACTION_ALREADY_UPDATED", "Một yêu cầu khác vừa cập nhật tài liệu. Hãy tiếp tục đọc lại.");
         completed.push({ id: input.id, name: input.original_name, characters: extracted.text.length, extraction: extracted.metadata });
+        if (!extracted.complete) return ok({ analysisId: id, inputs: completed, nextStep: "ingest", remainingFiles: remaining.length, progress: extracted.metadata?.extractionProgress });
       } catch (cause) {
         const safeCode = cause instanceof ApiError ? cause.code : "DOCUMENT_EXTRACTION_FAILED";
-        await db.from("analysis_inputs").update({ status: "error", metadata: { extraction: "failed", errorCode: safeCode } }).eq("id", input.id);
+        await db.from("analysis_inputs").update({ status: "error", metadata: { ...input.metadata, errorCode: safeCode } }).eq("id", input.id).eq("updated_at", input.updated_at);
         throw cause;
       }
     }

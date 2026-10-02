@@ -1,8 +1,7 @@
-import mammoth from "mammoth";
 import pdfParse from "pdf-parse";
 import { ApiError } from "@/lib/http";
 import { envInt } from "@/lib/db";
-import { generateLlm } from "@/lib/llm";
+import { prepareDocx, preparePdf, processExtractionUnit, serializeSourceBlocks, type ExtractionProgress, type ExtractionUnit } from "@/lib/ordered-extraction";
 
 export type ExtractedFile = { text: string; mimeType: string; byteSize: number; name: string; metadata?: Record<string, unknown> };
 
@@ -51,110 +50,65 @@ function verifyFileSignature(extension: string, buffer: Buffer) {
   if (extension === "docx" && !isZip) throw new ApiError(422, "FILE_CONTENT_MISMATCH", "Tệp DOCX không có cấu trúc Office hợp lệ.");
 }
 
-const OCR_SCHEMA = {
-  type: "object",
-  required: ["text", "visualDescription", "formulas", "diagramSource"],
-  properties: {
-    text: { type: "string", description: "Văn bản nhìn thấy trong tài liệu, giữ đúng thứ tự và chính tả." },
-    visualDescription: { type: "string", description: "Mô tả ngắn gọn sơ đồ, biểu đồ hoặc hình minh họa có ý nghĩa." },
-    formulas: { type: "array", items: { type: "string" }, description: "Công thức toán dưới dạng LaTeX, không tự suy diễn." },
-    diagramSource: { type: "string", description: "Mã Mermaid hợp lệ nếu sơ đồ có thể chuyển thành Mermaid; để trống nếu không phù hợp." },
-  },
-};
-
-async function extractVisual(buffer: Buffer, mimeType: string, name: string) {
-  const maxVisionBytes = envInt("MAX_VISION_MB", 8) * 1024 * 1024;
-  if (buffer.length > maxVisionBytes) {
-    throw new ApiError(413, "VISION_FILE_TOO_LARGE", `Tệp ảnh cần OCR phải nhỏ hơn ${Math.floor(maxVisionBytes / 1024 / 1024)} MB.`);
-  }
-  const result = await generateLlm({
-    purpose: "document_ocr",
-    system: "Bạn là bộ trích xuất tài liệu chính xác. Không bịa nội dung. Chép nguyên văn chữ, giữ cấu trúc bảng, ký hiệu và ngôn ngữ gốc. Viết công thức dưới dạng LaTeX. Mô tả sơ đồ theo đúng quan hệ nhìn thấy; chỉ sinh Mermaid khi có thể biểu diễn trung thực. Trả đủ các trường trong schema.",
-    prompt: `Đọc tệp “${name}”. Trích xuất chữ nhìn thấy, công thức, bảng và mô tả sơ đồ/biểu đồ. Nếu tài liệu không có một loại nội dung nào thì trả chuỗi rỗng hoặc mảng rỗng.`,
-    schema: OCR_SCHEMA,
-    media: { mimeType, base64Data: buffer.toString("base64") },
-    timeoutMs: 30_000,
-  });
-  const value = result.value && typeof result.value === "object" ? result.value as Record<string, unknown> : null;
-  if (!value) throw new ApiError(502, "VISION_INVALID_RESPONSE", "Bộ đọc ảnh trả về dữ liệu không đúng định dạng. Hãy thử lại hoặc nhập văn bản thủ công.");
-  const pieces: string[] = [];
-  if (typeof value.text === "string" && value.text.trim()) pieces.push(value.text.trim());
-  const formulas = Array.isArray(value.formulas) ? value.formulas.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).slice(0, 30) : [];
-  if (formulas.length) pieces.push(`Công thức nhận diện:\n${formulas.map(formula => `$$${formula.trim()}$$`).join("\n")}`);
-  if (typeof value.diagramSource === "string" && value.diagramSource.trim()) pieces.push(`Sơ đồ nhận diện (Mermaid):\n\`\`\`mermaid\n${value.diagramSource.trim()}\n\`\`\``);
-  if (typeof value.visualDescription === "string" && value.visualDescription.trim()) pieces.push(`Mô tả hình/sơ đồ: ${value.visualDescription.trim()}`);
-  return {
-    text: normalizeText(pieces.join("\n\n")),
-    metadata: { extraction: "gemini_vision", sourceMimeType: mimeType, hasText: Boolean(value.text), formulaCount: formulas.length, hasDiagram: Boolean(value.diagramSource), hasVisualDescription: Boolean(value.visualDescription) },
-  };
-}
-
-export async function extractFile(file: File): Promise<ExtractedFile> {
+export async function extractFileStep(file: File, checkpoint?: ExtractionProgress, previousText = ""): Promise<ExtractedFile & { complete: boolean }> {
   const name = file.name || "document";
   const extension = name.split(".").pop()?.toLowerCase() ?? "";
-  const expectedMime = MIME_BY_EXT[extension];
-  if (!expectedMime) {
-    throw new ApiError(415, "UNSUPPORTED_FILE_TYPE", "Chỉ hỗ trợ PDF, DOCX và các tệp văn bản như TXT, Markdown hoặc mã nguồn.");
-  }
-  const maxBytes = envInt("MAX_UPLOAD_MB", 20) * 1024 * 1024;
-  if (file.size > maxBytes) throw new ApiError(413, "FILE_TOO_LARGE", `Mỗi tệp tối đa ${Math.floor(maxBytes / 1024 / 1024)} MB.`);
+  const mimeType = MIME_BY_EXT[extension];
+  if (!mimeType) throw new ApiError(415, "UNSUPPORTED_FILE_TYPE", "Hỗ trợ PDF, DOCX, văn bản/mã nguồn và PNG/JPEG. Word .doc cũ cần chuyển sang .docx.");
+  if (file.size > envInt("MAX_UPLOAD_MB", 20) * 1024 * 1024) throw new ApiError(413, "FILE_TOO_LARGE", "Tệp vượt giới hạn tải lên.");
   if (!file.size) throw new ApiError(422, "EMPTY_FILE", `Tệp ${name} đang trống.`);
   const buffer = Buffer.from(await file.arrayBuffer());
   verifyFileSignature(extension, buffer);
-  let text = "";
-  let metadata: Record<string, unknown> = { extraction: "text_parser" };
   try {
-    if (expectedMime.startsWith("image/")) {
-      const visual = await extractVisual(buffer, expectedMime, name);
-      text = visual.text;
-      metadata = visual.metadata;
-    } else if (extension === "pdf") {
-      // pdf-parse 1.x corrupts the cross-reference offset when handed a Node
-      // Buffer on current runtimes. Its PDF.js engine handles plain Uint8Array.
-      // The published TypeScript declaration incorrectly requires Buffer.
-      text = (await pdfParse(new Uint8Array(buffer) as Buffer)).text;
-      if (normalizeText(text).length < 40) {
-        const visual = await extractVisual(buffer, expectedMime, name);
-        text = visual.text;
-        metadata = { ...visual.metadata, extraction: "gemini_vision_pdf_ocr", fallbackReason: "pdf_text_layer_empty" };
-      }
-    } else if (extension === "docx") {
-      text = (await mammoth.extractRawText({ buffer })).value;
-      const embedded: Array<{ mimeType: string; data: Buffer }> = [];
-      let ignoredEmbeddedImages = 0;
-      await mammoth.convertToHtml({ buffer }, {
-        convertImage: mammoth.images.imgElement(async image => {
-          if (embedded.length >= 3 || !["image/png", "image/jpeg"].includes(image.contentType)) ignoredEmbeddedImages++;
-          else embedded.push({ mimeType: image.contentType, data: Buffer.from(await image.read("base64"), "base64") });
-          return { src: "" };
-        }),
-      });
-      const imageText: string[] = [];
-      const ocrWarnings: string[] = [];
-      for (let index = 0; index < embedded.length; index++) {
-        try {
-          const visual = await extractVisual(embedded[index].data, embedded[index].mimeType, `${name} · hình ${index + 1}`);
-          if (visual.text) imageText.push(`Nội dung hình nhúng ${index + 1}:\n${visual.text}`);
-        } catch (error) {
-          if (error instanceof ApiError && ["VISION_FILE_TOO_LARGE", "VISION_PROVIDER_REQUIRED", "LLM_KEY_MISSING"].includes(error.code)) ocrWarnings.push(error.message);
-          else if (error instanceof ApiError) ocrWarnings.push("Một hình nhúng chưa đọc được; có thể chỉnh sửa nội dung ở bước kiểm tra.");
-          else throw error;
-        }
-      }
-      if (imageText.length) text = [text, ...imageText].filter(Boolean).join("\n\n");
-      metadata = {
-        extraction: imageText.length ? "docx_text_and_gemini_vision" : "docx_text_parser",
-        embeddedImagesProcessed: embedded.length,
-        ignoredEmbeddedImages,
-        ...(ocrWarnings.length ? { ocrWarnings } : {}),
-      };
+    // Deterministic tests/demo can still read a text-only PDF. Production Gemini
+    // reads every page, including pages that also have a complete text layer.
+    if (extension === "pdf" && (process.env.LLM_PROVIDER ?? "mock") === "mock") {
+      const text = normalizeText((await pdfParse(new Uint8Array(buffer) as Buffer)).text);
+      if (text.length < 40) throw new ApiError(503, "VISION_PROVIDER_REQUIRED", "PDF scan cần cấu hình Gemini để đọc hình và chữ.");
+      return { name, mimeType, byteSize: file.size, text, complete: true, metadata: { extraction: "pdf_text_demo", ocrWarnings: ["Chế độ demo chỉ đọc lớp chữ của PDF; hình cần Gemini."] } };
     }
-    else text = new TextDecoder("utf-8", { fatal: false }).decode(buffer);
+    if (extension !== "pdf" && extension !== "docx" && !mimeType.startsWith("image/")) return {
+      name, mimeType, byteSize: file.size, text: normalizeText(new TextDecoder("utf-8").decode(buffer)), complete: true, metadata: { extraction: "text_parser" },
+    };
+    const prepared = extension === "pdf" ? await preparePdf(buffer) : null;
+    const word = extension === "docx" ? await prepareDocx(buffer) : null;
+    const units: ExtractionUnit[] = prepared?.units ?? word?.units ?? [{ kind: "image", data: buffer, mimeType }];
+    const state: ExtractionProgress = checkpoint?.version === 2 ? { ...checkpoint, warnings: [...checkpoint.warnings] } : {
+      version: 2, nextUnit: 0, totalUnits: units.length, skippedIllustrations: 0, visualBlocks: 0, warnings: word?.warnings ?? [],
+    };
+    if (state.totalUnits !== units.length || state.nextUnit < 0 || state.nextUnit > units.length) throw new ApiError(409, "EXTRACTION_SOURCE_CHANGED", "Cấu trúc tệp thay đổi. Hãy tải lại tệp để đọc từ đầu.");
+    const pieces = previousText ? [previousText] : [];
+    let modelCalls = 0;
+    for (; state.nextUnit < units.length; state.nextUnit++) {
+      const unit = units[state.nextUnit];
+      if (unit.kind !== "text" && modelCalls >= 1) break;
+      const blocks = await processExtractionUnit(unit, name, prepared?.pdf);
+      if (unit.kind !== "text") modelCalls++;
+      state.skippedIllustrations += blocks.filter(block => block.kind === "illustration").length;
+      state.visualBlocks += blocks.filter(block => ["latex", "mermaid", "description"].includes(block.kind)).length;
+      if (blocks.some(block => block.kind === "description")) state.warnings.push(`Đơn vị ${state.nextUnit + 1}: một sơ đồ/công thức chỉ có mô tả; cần đối chiếu nguồn.`);
+      const content = serializeSourceBlocks(blocks);
+      if (content) pieces.push(content);
+    }
+    const text = normalizeText(pieces.join("\n\n"));
+    if (text.length > envInt("MAX_ANALYSIS_CHARS", 500000)) throw new ApiError(413, "EXTRACTED_TEXT_TOO_LONG", "Văn bản sau trích xuất vượt giới hạn. Hãy tách tài liệu.");
+    const complete = state.nextUnit === units.length;
+    return { name, mimeType, byteSize: file.size, text, complete, metadata: {
+      extraction: extension === "pdf" ? "pdf_ordered_vision" : extension === "docx" ? "docx_ordered" : "gemini_vision",
+      extractionProgress: state, readingOrderPreserved: true, skippedIllustrations: state.skippedIllustrations,
+      visualBlockCount: state.visualBlocks, ...(state.warnings.length ? { ocrWarnings: state.warnings } : {}),
+      ...(extension === "pdf" ? { pageCount: units.length, pagesProcessed: state.nextUnit } : {}),
+    } };
   } catch (error) {
     if (error instanceof ApiError) throw error;
-    throw new ApiError(422, "DOCUMENT_EXTRACTION_FAILED", `Không trích xuất được tệp ${name}.`, error instanceof Error ? error.message : undefined);
+    throw new ApiError(422, "DOCUMENT_EXTRACTION_FAILED", `Không đọc được cấu trúc tệp ${name}. Hãy kiểm tra tệp hoặc chuyển sang PDF/DOCX hợp lệ.`, error instanceof Error ? error.message : undefined);
   }
-  return { name, mimeType: expectedMime, byteSize: file.size, text: normalizeText(text), metadata };
+}
+
+export async function extractFile(file: File): Promise<ExtractedFile> {
+  let value = await extractFileStep(file);
+  while (!value.complete) value = await extractFileStep(file, value.metadata?.extractionProgress as ExtractionProgress, value.text);
+  return value;
 }
 
 export function normalizeText(value: string) {
@@ -278,17 +232,23 @@ export function outlineText(text: string): OutlineNode[] {
 
 function splitLongSection(text: string, title: string, baseOffset: number, limit: number, overlap: number): TextChunk[] {
   const chunks: TextChunk[] = [];
+  const protectedSpans = [...text.matchAll(/```[\s\S]*?```|\$\$[\s\S]*?\$\$/g)].map(match => ({ start: match.index!, end: match.index! + match[0].length }));
+  if (protectedSpans.some(span => span.end - span.start > limit)) throw new ApiError(422, "VISUAL_SOURCE_TOO_LONG", "Một khối mã/sơ đồ/công thức vượt giới hạn phần xử lý. Hãy rút gọn hoặc tách khối đó ở bước kiểm tra.");
   let cursor = 0;
   while (cursor < text.length) {
     let end = Math.min(text.length, cursor + limit);
     if (end < text.length) {
       const boundary = Math.max(text.lastIndexOf("\n", end), text.lastIndexOf(". ", end), text.lastIndexOf(" ", end));
       if (boundary > cursor + Math.floor(limit * 0.65)) end = boundary + 1;
+      const span = protectedSpans.find(span => span.start < end && span.end > end);
+      if (span) end = span.start > cursor ? span.start : span.end;
     }
     const content = text.slice(cursor, end).trim();
     if (content) chunks.push({ chunkIndex: chunks.length, title, content, charStart: baseOffset + cursor, charEnd: baseOffset + end });
     if (end >= text.length) break;
     cursor = Math.max(cursor + 1, end - overlap);
+    const span = protectedSpans.find(span => span.start < cursor && span.end > cursor);
+    if (span) cursor = span.end;
   }
   return chunks;
 }

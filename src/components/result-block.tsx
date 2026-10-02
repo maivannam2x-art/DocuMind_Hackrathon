@@ -3,11 +3,11 @@
 import React, { useEffect, useId, useRef, useState } from "react";
 import katex from "katex";
 import { getSupabaseAccessToken } from "@/lib/supabase-browser";
-import { scalarText, type ResultBlock } from "@/lib/result-content";
+import { scalarText, tableValues, type ResultBlock } from "@/lib/result-content";
 
-function MermaidDiagram({ source, analysisId, resultId }: { source: string; analysisId?: string; resultId?: string }) {
+function MermaidDiagram({ source, analysisId, resultId, expand = false }: { source: string; analysisId?: string; resultId?: string; expand?: boolean }) {
   const id = `mermaid-${useId().replaceAll(":", "")}`;
-  const [opened, setOpened] = useState(false);
+  const [opened, setOpened] = useState(expand);
   const [svg, setSvg] = useState("");
   const [error, setError] = useState("");
   const persistedKey = useRef("");
@@ -15,7 +15,7 @@ function MermaidDiagram({ source, analysisId, resultId }: { source: string; anal
     if (!opened || !source.trim() || source.length > 10000) return;
     let current = true;
     import("mermaid").then(async ({ default: mermaid }) => {
-      mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "neutral", suppressErrorRendering: true });
+      mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "neutral", htmlLabels: false, flowchart: { htmlLabels: false }, suppressErrorRendering: true });
       const parsed = await mermaid.parse(source, { suppressErrors: true });
       if (!parsed) throw new Error("Invalid Mermaid source");
       // Mermaid otherwise inserts its giant error diagram into document.body
@@ -48,7 +48,7 @@ function MermaidDiagram({ source, analysisId, resultId }: { source: string; anal
     }).catch(() => undefined);
     return () => { current = false; };
   }, [analysisId, resultId, source, svg]);
-  return <details className="diagram-view" onToggle={event => setOpened(event.currentTarget.open)}>
+  return <details className="diagram-view" open={opened} onToggle={event => setOpened(event.currentTarget.open)}>
     <summary>{svg ? "Sơ đồ · mở để xem ảnh" : "Sơ đồ · mở để kiểm tra và dựng ảnh"}</summary>
     {opened && <>{svg && <div className="diagram-render" role="img" aria-label="Sơ đồ từ tài liệu" dangerouslySetInnerHTML={{ __html: svg }} />}
       {(error || source.length > 10000) && <p className="diagram-error">Mã sơ đồ không hợp lệ hoặc quá dài để dựng ảnh. Nội dung nguồn vẫn được giữ bên dưới.</p>}
@@ -62,6 +62,8 @@ function StructuredData({ value }: { value: Record<string, unknown> }) {
 }
 
 function TableView({ content }: { content: unknown }) {
+  const table = tableValues(content);
+  if (table) return <div className="table-scroll"><table className="result-table"><thead><tr>{table.headers.map((header, i) => <th key={i}>{header}</th>)}</tr></thead><tbody>{table.rows.map((row, i) => <tr key={i}>{row.map((cell, j) => <td key={j}>{cell}</td>)}</tr>)}</tbody></table></div>;
   const object = content && typeof content === "object" && !Array.isArray(content) ? content as Record<string, unknown> : null;
   const rows = Array.isArray(content) ? content : Array.isArray(object?.rows) ? object.rows : [];
   const explicitHeaders = Array.isArray(object?.headers) ? object.headers.map(String) : [];
@@ -70,7 +72,7 @@ function TableView({ content }: { content: unknown }) {
   return <div className="table-scroll"><table className="result-table"><thead><tr>{headers.map(header => <th key={header}>{header.replaceAll("_", " ")}</th>)}</tr></thead><tbody>{rows.map((row, rowIndex) => <tr key={rowIndex}>{headers.map((header, colIndex) => <td key={`${rowIndex}-${header}`}>{Array.isArray(row) ? scalarText(row[colIndex]) : scalarText((row as Record<string, unknown>)?.[header])}</td>)}</tr>)}</tbody></table></div>;
 }
 
-export function ResultBlockView({ block, analysisId, resultId }: { block: ResultBlock; analysisId?: string; resultId?: string }) {
+export function ResultBlockView({ block, analysisId, resultId, expandDiagram = false }: { block: ResultBlock; analysisId?: string; resultId?: string; expandDiagram?: boolean }) {
   const type = block.type.toLowerCase().replaceAll("-", "_");
   const contentType = block.contentType ?? (typeof block.metadata?.contentType === "string" ? block.metadata.contentType as ResultBlock["contentType"] : undefined);
   const source = typeof block.content === "string" ? block.content : scalarText(block.content);
@@ -93,7 +95,7 @@ export function ResultBlockView({ block, analysisId, resultId }: { block: Result
       body = <div className="formula-view formula-invalid"><p>Không thể dựng công thức này. Kiểm tra lại mã LaTeX với tài liệu gốc.</p><pre>{math}</pre></div>;
     }
   } else if (contentType === "mermaid" || type === "mermaid" || (type === "diagram" && /^(flowchart|graph|sequenceDiagram|classDiagram|stateDiagram|erDiagram|gantt|pie|mindmap|journey|requirementDiagram)\b/.test(source.trim()))) {
-    body = <MermaidDiagram source={source.replace(/^```(?:mermaid)?\s*|```$/g, "").trim()} analysisId={analysisId} resultId={resultId} />;
+    body = <MermaidDiagram source={source.replace(/^```(?:mermaid)?\s*|```$/g, "").trim()} analysisId={analysisId} resultId={resultId} expand={expandDiagram} />;
   } else if (contentType === "image" || type === "image") {
     const candidate = typeof block.metadata?.assetUrl === "string" ? block.metadata.assetUrl : "";
     const safeUrl = candidate.startsWith("/") || /^https:\/\//i.test(candidate) ? candidate : "";

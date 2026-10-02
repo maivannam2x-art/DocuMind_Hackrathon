@@ -13,11 +13,29 @@ export function scalarText(value: unknown): string {
   return String(value);
 }
 
+export function tableValues(content: unknown): { headers: string[]; rows: string[][] } | null {
+  if (typeof content === "string") {
+    const rows = content.split("\n").filter(line => line.trim().startsWith("|")).map(line => line.trim().replace(/^\||\|$/g, "").split("|").map(cell => cell.trim()));
+    if (rows.length < 2) return null;
+    const headers = rows.shift()!;
+    if (rows[0]?.every(cell => /^:?-+:?$/.test(cell))) rows.shift();
+    return { headers, rows };
+  }
+  const object = content && typeof content === "object" && !Array.isArray(content) ? content as Record<string, unknown> : null;
+  const rows = Array.isArray(content) ? content : Array.isArray(object?.rows) ? object.rows : [];
+  if (!rows.length) return null;
+  const headers = Array.isArray(object?.headers) ? object.headers.map(String) : Array.isArray(rows[0]) ? rows[0].map((_, i) => `Cột ${i + 1}`) : Array.from(new Set(rows.flatMap(row => row && typeof row === "object" ? Object.keys(row) : [])));
+  if (!headers.length) return null;
+  return { headers, rows: rows.map(row => headers.map((header, i) => scalarText(Array.isArray(row) ? row[i] : (row as Record<string, unknown>)?.[header]))) };
+}
+
 export function blockToPlainText(block: ResultBlock): string {
   const type = block.type.toLowerCase();
   if (block.contentType === "image" || type === "image") return String(block.metadata?.alt ?? block.metadata?.caption ?? "Hình ảnh đính kèm");
   if (block.contentType === "json" || type === "json") return `Dữ liệu JSON:\n${JSON.stringify(block.content, null, 2)}`;
   if (block.contentType === "table" || type === "table") {
+    const table = tableValues(block.content);
+    if (table) return [table.headers.join(" | "), ...table.rows.map(row => row.join(" | "))].join("\n");
     const object = block.content && typeof block.content === "object" && !Array.isArray(block.content) ? block.content as Record<string, unknown> : null;
     const rows = Array.isArray(block.content) ? block.content : Array.isArray(object?.rows) ? object.rows : [];
     return rows.map(row => scalarText(row)).join("\n");

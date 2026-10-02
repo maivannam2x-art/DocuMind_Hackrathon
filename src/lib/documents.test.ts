@@ -54,9 +54,9 @@ describe("document preparation", () => {
 
     const extracted = await extractFile(file);
     expect(extracted.text).toContain("TCP thiết lập kết nối");
-    expect(extracted.text).toContain("$$RTT = t_2 - t_1$$");
+    expect(extracted.text).toContain("$$\nRTT = t_2 - t_1\n$$");
     expect(extracted.text).toContain("```mermaid");
-    expect(extracted.metadata).toMatchObject({ extraction: "gemini_vision", formulaCount: 1, hasDiagram: true });
+    expect(extracted.metadata).toMatchObject({ extraction: "gemini_vision", readingOrderPreserved: true, visualBlockCount: 3 });
     const request = JSON.parse(String(fetchMock.mock.calls[0][1]?.body)) as { contents: Array<{ parts: Array<{ inlineData?: { mimeType: string; data: string } }> }> };
     expect(request.contents[0].parts[1].inlineData?.mimeType).toBe("image/png");
     expect(request.contents[0].parts[1].inlineData?.data).toBe(pngSignature.toString("base64"));
@@ -248,8 +248,8 @@ describe("document preparation", () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: JSON.stringify(vision) }] } }] }), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     const extracted = await extractFile(new File([Uint8Array.from(image)], "complexity.jpg"));
-    expect(extracted.text).toContain("$$T(n)=n\\log n$$");
-    expect(extracted.metadata).toMatchObject({ extraction: "gemini_vision", formulaCount: 1 });
+    expect(extracted.text).toContain("$$\nT(n)=n\\log n\n$$");
+    expect(extracted.metadata).toMatchObject({ extraction: "gemini_vision", readingOrderPreserved: true, visualBlockCount: 2 });
     const body = JSON.parse(String(fetchMock.mock.calls[0][1].body));
     expect(body.contents[0].parts[1].inlineData.mimeType).toBe("image/jpeg");
   });

@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { randomUUID } from "node:crypto";
 import { getIdentity, ownerFilter, setGuestCookie, type RequestIdentity } from "@/lib/auth";
 import { getAdminDb, envInt } from "@/lib/db";
-import { extractFile, mimeTypeForFilename, normalizeText } from "@/lib/documents";
+import { mimeTypeForFilename, normalizeText } from "@/lib/documents";
 import { ApiError, errorResponse, ok, readJson } from "@/lib/http";
 import { assertHasAnalysisInput, createAnalysisSchema, safeBody } from "@/lib/validation";
 
@@ -94,22 +94,19 @@ export async function POST(request: NextRequest) {
       });
     }
     const maxTotalChars = envInt("MAX_ANALYSIS_CHARS", 500000);
-    let totalChars = body.text?.length ?? 0;
+    const totalChars = body.text?.length ?? 0;
     for (const file of files) {
-      const extracted = await extractFile(file);
-      totalChars += extracted.text.length;
-      if (totalChars > maxTotalChars) throw new ApiError(413, "ANALYSIS_TOO_LARGE", `Tổng nội dung vượt giới hạn ${maxTotalChars.toLocaleString()} ký tự.`);
+      const mimeType = mimeTypeForFilename(file.name);
+      if (!mimeType) throw new ApiError(415, "UNSUPPORTED_FILE_TYPE", `Chưa hỗ trợ tệp ${file.name}.`);
+      if (file.size > envInt("MAX_UPLOAD_MB", 20) * 1024 * 1024) throw new ApiError(413, "FILE_TOO_LARGE", `Tệp ${file.name} vượt giới hạn tải lên.`);
       const inputId = randomUUID();
-      const extension = extracted.name.split(".").pop()?.toLowerCase() ?? "txt";
+      const extension = file.name.split(".").pop()?.toLowerCase() ?? "txt";
       const prefix = identity.userId ? `users/${identity.userId}` : `guests/${identity.guestHash}`;
       const storagePath = `${prefix}/${analysis.id}/${inputId}.${extension}`;
-      const { error: uploadError } = await db.storage.from("analysis-inputs").upload(storagePath, Buffer.from(await file.arrayBuffer()), {
-        contentType: storageMimeType(extracted.mimeType), upsert: false,
-      });
-      if (uploadError) throw new ApiError(500, "FILE_STORAGE_FAILED", `Không lưu được tệp ${file.name}.`, uploadError.message);
+      const { error: uploadError } = await db.storage.from("analysis-inputs").upload(storagePath, Buffer.from(await file.arrayBuffer()), { contentType: storageMimeType(mimeType), upsert: false });
+      if (uploadError) throw new ApiError(503, "FILE_STORAGE_FAILED", `Không lưu được tệp ${file.name}.`, uploadError.message);
       uploadedPaths.push(storagePath);
-      addTextInput(extracted.text, extracted.name, "file", extracted.mimeType, extracted.byteSize, storagePath);
-      inputs[inputs.length - 1].id = inputId;
+      inputs.push({ id: inputId, analysis_id: analysis.id, input_kind: "file", original_name: file.name, mime_type: mimeType, byte_size: file.size, storage_bucket: "analysis-inputs", storage_path: storagePath, original_text: null, normalized_text: null, status: "staged", position: inputs.length, metadata: { extraction: "pending" } });
     }
     if (totalChars > maxTotalChars) throw new ApiError(413, "ANALYSIS_TOO_LARGE", `Tổng nội dung vượt giới hạn ${maxTotalChars.toLocaleString()} ký tự.`);
     const { data: savedInputs, error: inputError } = await db.from("analysis_inputs").insert(inputs).select("id,input_kind,original_name,status,position,byte_size");
@@ -121,7 +118,7 @@ export async function POST(request: NextRequest) {
       if (signError || !signed?.token) throw new ApiError(503, "FILE_UPLOAD_SETUP_FAILED", `Không tạo được phiên tải tệp ${spec.name}.`, signError?.message);
       uploads.push({ inputId: spec.inputId, name: spec.name, signedUrl: signed.signedUrl, mimeType: spec.mimeType });
     }
-    const response = ok({ analysis, inputs: savedInputs, uploads, nextStep: uploadSpecs.length || files.length ? "upload" : "validate" }, 201);
+    const response = ok({ analysis, inputs: savedInputs, uploads, nextStep: uploadSpecs.length ? "upload" : files.length ? "ingest" : "validate" }, 201);
     return setGuestCookie(response, identity);
   } catch (error) {
     if (identity && createdAnalysisId) {
