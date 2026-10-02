@@ -151,7 +151,8 @@ describe("report export formats", () => {
       ],
     };
     const html = reportToHtml(imageReport);
-    expect(html).toContain("data:image/svg+xml;base64,");
+    expect(html).toContain("data:image/png;base64,");
+    expect(html).not.toContain("data:image/svg+xml;base64,");
     const pdf = await reportToPdf(imageReport);
     const docx = await reportToDocx(imageReport);
     expect(pdf.toString("latin1")).toContain("/Subtype /Image");

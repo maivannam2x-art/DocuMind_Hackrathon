@@ -174,6 +174,7 @@ async function fixture(page: Page, pauseCompletes = false) {
                 },
               ],
             };
+    else if (path.endsWith("/assets")) data = { stored: true, signedUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jR1sAAAAASUVORK5CYII=", mimeType: "image/png" };
     else if (path.endsWith("/quiz")) data = { quiz: { id: "quiz" }, questions };
     else if (path.endsWith("/chat"))
       data =
@@ -275,8 +276,8 @@ test("input → review → confirm → result, typed visuals, quiz, chat and exp
     .click();
   await page.getByRole("button", { name: /Mở tất cả/ }).click();
   await page.locator(".diagram-view summary").first().click();
-  await expect(page.locator(".diagram-render svg").first()).toBeVisible();
-  await expect(page.locator(".katex").first()).toBeVisible();
+  await expect(page.getByRole("img", { name: "Sơ đồ từ tài liệu" }).first()).toBeVisible();
+  await expect(page.getByRole("img", { name: "Công thức toán" }).first()).toBeVisible();
   await page.getByRole("tab", { name: /Quiz/ }).click();
   await page
     .getByRole("radio", { name: "Giao diện lập trình ứng dụng", exact: false })

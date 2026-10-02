@@ -1,4 +1,6 @@
+import JSZip from "jszip";
 import path from "node:path";
+import { visualKind, visualSource, type VisualImage } from "@/lib/visual-renderer";
 import PDFDocument from "pdfkit";
 import {
   Document,
@@ -31,6 +33,8 @@ export type ReportDocument = {
   summary?: string;
   conclusion?: string;
   sections?: ReportSection[];
+  /** Binary buffers exist only during export; never persist this field in JSON/database. */
+  images?: Map<string, VisualImage>;
 };
 
 function escapeHtml(value: string) {
@@ -88,7 +92,9 @@ function isVisual(block: ResultBlock) {
   );
 }
 
-function embeddedVisualPng(block: ResultBlock) {
+function embeddedVisualPng(block: ResultBlock, images?: Map<string, VisualImage>) {
+  const image = images?.get(`${visualKind(block)}:${visualSource(block)}`);
+  if (image) return image;
   if (!isVisual(block)) return null;
   const encoded =
     typeof block.metadata?.inlinePngBase64 === "string"
@@ -135,6 +141,8 @@ function scaleDiagram(
 
 function markdownBlock(block: ResultBlock) {
   const text = blockToPlainText(block);
+  if (visualKind(block) && typeof block.metadata?.assetUrl === "string")
+    return `![${isFormula(block) ? "Công thức" : "Sơ đồ"}](${block.metadata.assetUrl})`;
   if (block.contentType === "table" || block.type === "table") {
     const table = tableValues(block.content);
     if (table)
@@ -177,7 +185,22 @@ export function reportToMarkdown(report: ReportDocument) {
   return lines.join("\n").trim() + "\n";
 }
 
-function htmlBlock(block: ResultBlock) {
+/** Portable Markdown bundle: local PNG paths survive signed-URL expiration. */
+export async function reportToMarkdownZip(report: ReportDocument) {
+  const zip = new JSZip();
+  const names = new Map<string, string>();
+  for (const [key, image] of report.images ?? []) {
+    const name = `images/visual-${names.size + 1}.png`;
+    names.set(key, name);
+    zip.file(name, image.bytes);
+  }
+  const portable = { ...report, sections: report.sections?.map(section => ({ ...section, blocks: section.blocks.map(block => ({ ...block, metadata: { ...block.metadata, assetUrl: names.get(`${visualKind(block)}:${visualSource(block)}`) } })) })) };
+  zip.file("report.md", reportToMarkdown(portable));
+  zip.file("README.txt", "Giải nén toàn bộ thư mục trước khi mở report.md. Thư mục images chứa ảnh sơ đồ và công thức, không cần Internet hoặc liên kết có thời hạn.");
+  return zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+}
+
+function htmlBlock(block: ResultBlock, images?: Map<string, VisualImage>) {
   const text = blockToPlainText(block);
   if (block.contentType === "table" || block.type === "table") {
     const table = tableValues(block.content);
@@ -186,6 +209,11 @@ function htmlBlock(block: ResultBlock) {
   }
   if (isList(block))
     return `<ul>${(Array.isArray(block.content) ? block.content : [block.content]).map((item) => `<li>${escapeHtml(listItemText(item))}</li>`).join("")}</ul>`;
+  const visual = embeddedVisualPng(block, images);
+  if (visual) {
+    const caption = typeof block.metadata?.caption === "string" ? block.metadata.caption : isFormula(block) ? "Công thức" : block.type === "image" ? "Hình ảnh" : "Sơ đồ";
+    return `<figure class="${isFormula(block) ? "formula-export" : "diagram-export"}"><figcaption>${escapeHtml(caption)}</figcaption><img alt="${escapeHtml(String(block.metadata?.alt ?? caption))}" src="data:image/png;base64,${visual.bytes.toString("base64")}"></figure>`;
+  }
   if (
     block.contentType === "latex" ||
     ["formula", "math", "equation"].includes(block.type)
@@ -200,22 +228,6 @@ function htmlBlock(block: ResultBlock) {
     }
   }
   const label = blockLabel(block);
-  const inlineSvg =
-    typeof block.metadata?.inlineSvgBase64 === "string"
-      ? block.metadata.inlineSvgBase64
-      : "";
-  const visual = embeddedVisualPng(block);
-  if (visual) {
-    const imageSource =
-      inlineSvg && block.contentType !== "image" && block.type !== "image"
-        ? `data:image/svg+xml;base64,${inlineSvg}`
-        : `data:image/png;base64,${block.metadata?.inlinePngBase64}`;
-    const caption =
-      typeof block.metadata?.caption === "string"
-        ? block.metadata.caption
-        : label;
-    return `<figure class="diagram-export"><figcaption>${escapeHtml(caption)}</figcaption><img alt="${escapeHtml(String(block.metadata?.alt ?? caption))}" src="${imageSource}">${block.contentType === "mermaid" || block.type === "mermaid" || block.type === "diagram" ? `<details><summary>Xem mã sơ đồ</summary><pre class="source">${escapeHtml(text)}</pre></details>` : ""}</figure>`;
-  }
   const className =
     isCode(block) ||
     block.contentType === "json" ||
@@ -233,10 +245,10 @@ export function reportToHtml(report: ReportDocument) {
   const sections = (report.sections ?? [])
     .map(
       (section) =>
-        `<section><h2>${escapeHtml(section.title)}</h2>${section.summary ? `<p class="section-summary">${escapeHtml(section.summary)}</p>` : ""}${(section.blocks ?? []).map(htmlBlock).join("")}</section>`,
+        `<section><h2>${escapeHtml(section.title)}</h2>${section.summary ? `<p class="section-summary">${escapeHtml(section.summary)}</p>` : ""}${(section.blocks ?? []).map(block => htmlBlock(block, report.images)).join("")}</section>`,
     )
     .join("");
-  return `<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${escapeHtml(report.title || "Báo cáo học tập")}</title><style>body{font:16px/1.65 Arial,sans-serif;color:#202235;max-width:920px;margin:48px auto;padding:0 24px}header{border-bottom:1px solid #e4e5ed;padding-bottom:24px;margin-bottom:28px}h1{font-size:32px;margin:0 0 10px}h2{font-size:22px;margin:0 0 12px}section{margin:30px 0}.section-summary{color:#62667b}.report-conclusion{padding:18px;border-left:3px solid #7965dc;background:#f8f7ff;border-radius:0 10px 10px 0}.block{margin:14px 0}.label{display:block;text-transform:uppercase;letter-spacing:.08em;font-size:11px;color:#7060c7;font-weight:700;margin-bottom:7px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f6f7fb;border-radius:8px;padding:14px;font:14px/1.65 ui-monospace,monospace}.content{background:transparent;padding:0;font:inherit}ul{padding-left:24px}.diagram-export,.formula-export{margin:18px 0;padding:16px;border:1px solid #e7e5ef;border-radius:10px;break-inside:avoid}.diagram-export img{display:block;width:100%;height:auto;max-height:720px;object-fit:contain}.diagram-export figcaption,.formula-export figcaption{font-size:11px;color:#7060c7;font-weight:700;margin-bottom:12px}.formula-export math{display:block;font-size:1.35em}.diagram-export details{margin-top:12px;font-size:12px}@media print{body{margin:0 auto;padding:0 8mm}section{break-inside:avoid}}</style></head><body><header><h1>${escapeHtml(report.title || "Báo cáo học tập")}</h1>${report.summary ? `<p>${escapeHtml(report.summary)}</p>` : ""}</header>${sections}${conclusion}</body></html>`;
+  return `<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${escapeHtml(report.title || "Báo cáo học tập")}</title><style>body{font:16px/1.65 Arial,sans-serif;color:#202235;max-width:920px;margin:48px auto;padding:0 24px}header{border-bottom:1px solid #e4e5ed;padding-bottom:24px;margin-bottom:28px}h1{font-size:32px;margin:0 0 10px}h2{font-size:22px;margin:0 0 12px}section{margin:30px 0}.section-summary{color:#62667b}.report-conclusion{padding:18px;border-left:3px solid #7965dc;background:#f8f7ff;border-radius:0 10px 10px 0}.block{margin:14px 0}.label{display:block;text-transform:uppercase;letter-spacing:.08em;font-size:11px;color:#7060c7;font-weight:700;margin-bottom:7px}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#f6f7fb;border-radius:8px;padding:14px;font:14px/1.65 ui-monospace,monospace}.content{background:transparent;padding:0;font:inherit}ul{padding-left:24px}.diagram-export,.formula-export{margin:18px 0;padding:16px;border:1px solid #e7e5ef;border-radius:10px;break-inside:avoid}.diagram-export img{display:block;width:100%;height:auto;max-height:720px;object-fit:contain}.diagram-export figcaption,.formula-export figcaption{font-size:11px;color:#7060c7;font-weight:700;margin-bottom:12px}.formula-export img{max-width:100%;max-height:100px;width:auto;height:auto}.formula-export math{display:block;font-size:1.35em}.diagram-export details{margin-top:12px;font-size:12px}@media print{body{margin:0 auto;padding:0 8mm}section{break-inside:avoid}}</style></head><body><header><h1>${escapeHtml(report.title || "Báo cáo học tập")}</h1>${report.summary ? `<p>${escapeHtml(report.summary)}</p>` : ""}</header>${sections}${conclusion}</body></html>`;
 }
 
 export async function reportToPdf(report: ReportDocument): Promise<Buffer> {
@@ -333,9 +345,9 @@ export async function reportToPdf(report: ReportDocument): Promise<Buffer> {
           continue;
         }
       }
-      const visual = embeddedVisualPng(block);
+      const visual = embeddedVisualPng(block, report.images);
       if (visual) {
-        const size = scaleDiagram(visual.width, visual.height, 490, 330);
+        const size = scaleDiagram(visual.width, visual.height, 490, isFormula(block) ? 64 : 600);
         if (document.y + size.height + 28 > 790) document.addPage();
         document
           .fontSize(8)
@@ -343,7 +355,7 @@ export async function reportToPdf(report: ReportDocument): Promise<Buffer> {
           .text(
             block.contentType === "image" || block.type === "image"
               ? "HÌNH ẢNH"
-              : "SƠ ĐỒ",
+              : isFormula(block) ? "CÔNG THỨC" : "SƠ ĐỒ",
           );
         document.moveDown(0.25);
         const imageTop = document.y;
@@ -440,15 +452,15 @@ export async function reportToDocx(report: ReportDocument): Promise<Buffer> {
           continue;
         }
       }
-      const visual = embeddedVisualPng(block);
+      const visual = embeddedVisualPng(block, report.images);
       if (visual) {
-        const scaled = scaleDiagram(visual.width, visual.height, 520, 360);
+        const scaled = scaleDiagram(visual.width, visual.height, 520, isFormula(block) ? 64 : 600);
         children.push(
           new Paragraph({
             text:
               block.contentType === "image" || block.type === "image"
                 ? "Hình ảnh"
-                : "Sơ đồ",
+                : isFormula(block) ? "Công thức" : "Sơ đồ",
             heading: HeadingLevel.HEADING_3,
           }),
         );

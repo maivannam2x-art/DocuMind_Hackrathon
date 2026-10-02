@@ -322,7 +322,7 @@ export function ResultWorkspace({
                 },
                 {
                   id: "markdown",
-                  name: "Markdown (.md)",
+                  name: "Markdown + ảnh (.zip)",
                   detail: "Tài liệu văn bản cho ghi chú và kỹ thuật",
                 },
                 {

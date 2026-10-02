@@ -1,7 +1,6 @@
 "use client";
 
-import React, { useEffect, useId, useRef, useState } from "react";
-import katex from "katex";
+import React, { useEffect, useId, useState } from "react";
 import { renderMermaid } from "@/lib/mermaid-browser";
 import { getSupabaseAccessToken } from "@/lib/supabase-browser";
 import {
@@ -12,116 +11,45 @@ import {
   type ResultBlock,
 } from "@/lib/result-content";
 
-function MermaidDiagram({
-  source,
-  analysisId,
-  resultId,
-  expand = false,
-}: {
-  source: string;
-  analysisId?: string;
-  resultId?: string;
-  expand?: boolean;
+function StoredVisual({ source, assetType, analysisId, resultId, initialUrl, expand = false }: {
+  source: string; assetType: "mermaid" | "latex" | "plantuml"; analysisId?: string; resultId?: string; initialUrl?: string; expand?: boolean;
 }) {
-  const id = `mermaid-${useId().replaceAll(":", "")}`;
-  const [opened, setOpened] = useState(expand);
-  const [svg, setSvg] = useState("");
+  const id = `visual-${useId().replaceAll(":", "")}`;
+  const [opened, setOpened] = useState(expand || assetType === "latex");
+  const [url, setUrl] = useState(initialUrl ?? "");
   const [error, setError] = useState("");
-  const persistedKey = useRef("");
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => { setUrl(initialUrl ?? ""); setError(""); }, [initialUrl, source]);
   useEffect(() => {
-    if (!opened || !source.trim() || source.length > 10000) return;
-    let current = true;
+    if (!opened || url || error || !analysisId || !resultId) return;
+    let active = true;
     setError("");
-    renderMermaid(source, id)
-      .then((rendered) => {
-        if (current) setSvg(rendered);
-      })
-      .catch(() => {
-        if (current)
-          setError(
-            "Không thể dựng sơ đồ tự động. Mã nguồn sơ đồ vẫn được giữ bên dưới.",
-          );
+    let guest = false;
+    try { guest = JSON.parse(sessionStorage.getItem("documind:guest-analysis-ids") ?? "[]").includes(analysisId); } catch { /* cookie authorization */ }
+    void (async () => {
+      const token = guest ? null : await getSupabaseAccessToken();
+      const send = (svg?: string) => fetch(`/api/analyses/${analysisId}/assets`, {
+        method: "POST", credentials: "include", headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ resultId, assetType, source: source.trim(), svg }),
       });
-    return () => {
-      current = false;
-    };
-  }, [id, source, opened]);
-  useEffect(() => {
-    if (!svg || !analysisId || !resultId) return;
-    const key = `${analysisId}:${resultId}:${source}`;
-    if (persistedKey.current === key) return;
-    let current = true;
-    let isGuestAnalysis = false;
-    try {
-      const ids = JSON.parse(
-        sessionStorage.getItem("documind:guest-analysis-ids") ?? "[]",
-      ) as unknown;
-      isGuestAnalysis = Array.isArray(ids) && ids.includes(analysisId);
-    } catch {
-      /* A guest cookie can still authorize the request. */
-    }
-    void (isGuestAnalysis ? Promise.resolve(null) : getSupabaseAccessToken())
-      .then((token) =>
-        fetch(`/api/analyses/${analysisId}/assets`, {
-          method: "POST",
-          credentials: "include",
-          headers: {
-            "content-type": "application/json",
-            ...(token ? { authorization: `Bearer ${token}` } : {}),
-          },
-          body: JSON.stringify({
-            resultId,
-            assetType: "mermaid",
-            source,
-            svg,
-            title: "Sơ đồ trong kết quả phân tích",
-          }),
-        }),
-      )
-      .then((response) => {
-        if (response.ok && current) persistedKey.current = key;
-      })
-      .catch(() => undefined);
-    return () => {
-      current = false;
-    };
-  }, [analysisId, resultId, source, svg]);
-  return (
-    <details
-      className="diagram-view"
-      open={opened}
-      onToggle={(event) => setOpened(event.currentTarget.open)}
-    >
-      <summary>
-        {svg ? "Sơ đồ · mở để xem ảnh" : "Sơ đồ · mở để kiểm tra và dựng ảnh"}
-      </summary>
-      {opened && (
-        <>
-          {svg && (
-            <div
-              className="diagram-render"
-              role="img"
-              aria-label="Sơ đồ từ tài liệu"
-              dangerouslySetInnerHTML={{ __html: svg }}
-            />
-          )}
-          {(error || source.length > 10000) && (
-            <p className="diagram-error">
-              Mã sơ đồ không hợp lệ hoặc quá dài để dựng ảnh. Nội dung nguồn vẫn
-              được giữ bên dưới.
-            </p>
-          )}
-          {!svg && !error && source.length <= 10000 && (
-            <p className="diagram-error">Đang kiểm tra cú pháp sơ đồ...</p>
-          )}
-          <details>
-            <summary>Xem mã Mermaid</summary>
-            <pre>{source}</pre>
-          </details>
-        </>
-      )}
-    </details>
-  );
+      let response = await send();
+      if (response.status === 422 && assetType === "mermaid" && source.length <= 10000) response = await send(await renderMermaid(source, id));
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error?.message ?? "Chưa tạo và lưu được ảnh. Hãy thử lại.");
+      if (active) setUrl(payload.data.signedUrl);
+    })().catch(failure => { if (active) setError(failure instanceof Error ? failure.message : "Chưa lưu được ảnh."); });
+    return () => { active = false; };
+  }, [opened, url, source, analysisId, resultId, assetType, id, attempt, error]);
+  const label = assetType === "latex" ? "Công thức" : "Sơ đồ";
+  return <details className="diagram-view" open={opened} onToggle={event => setOpened(event.currentTarget.open)}>
+    <summary>{label} · mở để xem ảnh</summary>
+    {opened && <>
+      {url && <div className="diagram-render"><img src={url} alt={assetType === "latex" ? "Công thức toán" : "Sơ đồ từ tài liệu"} style={{ maxWidth: "100%", height: "auto", maxHeight: assetType === "latex" ? 100 : undefined }} onError={() => { setUrl(""); setError("Đường dẫn ảnh đã hết hạn. Bấm thử lại để lấy ảnh đã lưu."); }} /></div>}
+      {!url && !error && <p>Hệ thống đang dựng ảnh và lưu Supabase Storage...</p>}
+      {error && <p className="diagram-error">{error} <button type="button" onClick={() => { setError(""); setAttempt(value => value + 1); }}>Thử lại</button></p>}
+      <details><summary>Xem mã {assetType === "latex" ? "LaTeX" : assetType === "plantuml" ? "PlantUML" : "Mermaid"}</summary><pre>{source}</pre></details>
+    </>}
+  </details>;
 }
 
 /** Inline **bold** and `code` as React nodes; the text is never injected as HTML. */
@@ -358,34 +286,7 @@ export function ResultBlockView({
       typeof block.metadata?.latex === "string"
         ? String(block.metadata.latex)
         : source;
-    try {
-      const rendered = katex.renderToString(
-        math.replace(/^\$\$?|\$\$?$/g, ""),
-        {
-          displayMode: true,
-          throwOnError: true,
-          trust: false,
-          strict: "ignore",
-        },
-      );
-      body = (
-        <div
-          className="formula-view"
-          aria-label="Công thức toán"
-          dangerouslySetInnerHTML={{ __html: rendered }}
-        />
-      );
-    } catch {
-      body = (
-        <div className="formula-view formula-invalid">
-          <p>
-            Không thể dựng công thức này. Kiểm tra lại mã LaTeX với tài liệu
-            gốc.
-          </p>
-          <pre>{math}</pre>
-        </div>
-      );
-    }
+    body = <StoredVisual source={math} assetType="latex" analysisId={analysisId} resultId={resultId} initialUrl={typeof block.metadata?.assetUrl === "string" ? block.metadata.assetUrl : undefined} expand />;
   } else if (
     contentType === "mermaid" ||
     type === "mermaid" ||
@@ -395,7 +296,7 @@ export function ResultBlockView({
       ))
   ) {
     body = (
-      <MermaidDiagram
+      <StoredVisual assetType="mermaid" initialUrl={typeof block.metadata?.assetUrl === "string" ? block.metadata.assetUrl : undefined}
         source={source.replace(/^```(?:mermaid)?\s*|```$/g, "").trim()}
         analysisId={analysisId}
         resultId={resultId}
@@ -430,15 +331,7 @@ export function ResultBlockView({
       </p>
     );
   } else if (contentType === "plantuml" || type === "plantuml") {
-    body = (
-      <div className="diagram-view">
-        <span className="format-badge">PlantUML · mã sơ đồ</span>
-        <pre>{source}</pre>
-        <p className="diagram-error">
-          Mã PlantUML được giữ nguyên để xuất hoặc mở bằng công cụ PlantUML.
-        </p>
-      </div>
-    );
+    body = <StoredVisual source={source} assetType="plantuml" analysisId={analysisId} resultId={resultId} initialUrl={typeof block.metadata?.assetUrl === "string" ? block.metadata.assetUrl : undefined} expand={expandDiagram} />;
   } else if (contentType === "table" || type === "table") {
     body = <TableView content={block.content} />;
   } else if (

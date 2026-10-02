@@ -4,29 +4,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { ResultBlockView } from "./result-block";
 
 describe("result block visual fallback", () => {
-  it("renders valid LaTeX and labels invalid formulas without leaking error markup", () => {
-    const valid = renderToStaticMarkup(
-      <ResultBlockView
-        block={{
-          type: "formula",
-          contentType: "latex",
-          content: "T=\\frac{1}{n}\\sum_{i=1}^{n}x_i",
-        }}
-      />,
-    );
-    const invalid = renderToStaticMarkup(
-      <ResultBlockView
-        block={{
-          type: "formula",
-          contentType: "latex",
-          content: "\\unknownCommand{x}",
-        }}
-      />,
-    );
-    expect(valid).toContain("katex-html");
-    expect(invalid).toContain("Không thể dựng công thức này");
-    expect(invalid).toContain("\\unknownCommand{x}");
-    expect(invalid).not.toContain("katex-error");
+  it("uses stored PNG URLs for formulas and preserves editable source", () => {
+    const html = renderToStaticMarkup(<ResultBlockView block={{ type: "formula", contentType: "latex", content: "T=\\frac{1}{n}", metadata: { assetUrl: "https://example.com/formula.png" } }} />);
+    expect(html).toContain('src="https://example.com/formula.png"');
+    expect(html).toContain('alt="Công thức toán"');
+    expect(html).toContain("Xem mã LaTeX");
+    expect(html).not.toContain("katex-html");
   });
 
   it("does not render Mermaid until the diagram is opened", () => {
@@ -39,7 +22,7 @@ describe("result block visual fallback", () => {
         }}
       />,
     );
-    expect(html).toContain("Sơ đồ · mở để kiểm tra và dựng ảnh");
+    expect(html).toContain("Sơ đồ · mở để xem ảnh");
     expect(html).not.toContain("<svg");
   });
 });

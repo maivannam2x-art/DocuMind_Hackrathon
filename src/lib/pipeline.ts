@@ -1,3 +1,4 @@
+import { prepareReportImages } from "@/lib/visual-assets";
 import { analysisDepth, depthInstructions } from "@/lib/analysis-depth";
 import { envInt } from "@/lib/db";
 import { startActivity, finishActivity } from "@/lib/activity";
@@ -764,6 +765,9 @@ export async function runAnalysis(
         resultError.message,
       );
     await persistAssets(analysisId, resultRow.id, resultJson.sections);
+    const visualActivity = await startActivity(analysisId, "system", "Hệ thống dựng ảnh sơ đồ/công thức và lưu Supabase Storage");
+    const visuals = await prepareReportImages(analysisId, resultRow.id, resultJson, false);
+    await finishActivity(visualActivity, visuals.failures.length ? "failed" : "succeeded");
     if (claimed.quiz_enabled)
       await generateQuiz(
         analysisId,

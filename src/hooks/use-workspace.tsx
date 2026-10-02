@@ -1209,7 +1209,7 @@ export function useWorkspace() {
     setBusy(true);
     setError("");
     try {
-      if (["pdf", "docx", "html"].includes(format) && resultId && result) {
+      if (resultId && result) {
         const diagrams = Array.from(
           new Set(
             result.sections
@@ -1270,10 +1270,7 @@ export function useWorkspace() {
               sourceOnly++;
             }
           }
-          if (sourceOnly)
-            setToast(
-              `${sourceOnly} sơ đồ chưa tạo được ảnh; báo cáo vẫn giữ mã và nội dung gốc của chúng.`,
-            );
+          if (sourceOnly) throw new Error(`${sourceOnly} sơ đồ chưa dựng được ảnh. Kiểm tra mã sơ đồ trong kết quả rồi thử lại; báo cáo chưa được xuất để tránh thiếu ảnh.`);
         }
       }
       setLoadingLabel("Đang tạo tệp báo cáo...");
