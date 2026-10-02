@@ -46,7 +46,7 @@ Khi chuyển project production mới, chạy đầy đủ các file database th
 
 - 103 unit test đạt, gồm bộ 72 test có sẵn và các test mới cho retrieval, privacy, Gemini transport, quota, quiz 100, pause/recovery và semantic list/JSON.
 - TypeScript sạch; lint không có error, còn hai cảnh báo `<img>` cho ảnh private/signed URL. Build Next.js thành công trong CI.
-- CI Playwright chạy trên desktop/mobile với API fixture: flow tuần tự, Mermaid SVG, KaTeX, quiz/chấm/lịch sử, chat/trích dẫn, report preview/download, đầu vào không hợp lệ, bàn phím và overflow. Bổ sung case mất response khi pause nhưng server đã hoàn tất.
+- 8/8 test CI Playwright đạt trên desktop/mobile với API fixture: flow tuần tự, Mermaid SVG, KaTeX, quiz/chấm/lịch sử, chat/trích dẫn, report preview/download, đầu vào không hợp lệ, bàn phím và overflow. Bổ sung case mất response khi pause nhưng server đã hoàn tất.
 
 ### Production Gemini/Supabase thật
 
@@ -79,3 +79,12 @@ Không suy rộng “không có 500 trong các test” thành “không thể c�
 - Chưa tính chi phí tiền theo bảng giá model và chưa audit trực quan bằng Microsoft Word. Test e2e fixture kiểm tra UI, không thay thế test live provider.
 
 Bản này là một đợt cập nhật và kiểm chứng có bằng chứng; không coi số test xanh là cam kết mọi đầu vào hay mọi điều kiện production đều đã được bao phủ.
+
+## Xác nhận bản deploy cuối
+
+- Commit code `09f1d4b21bf48aaba86e465afe5527e41ec8b421`: GitHub Actions run `37021586470` thành công (103 unit test, build, 8 e2e); Vercel báo success.
+- Sau deploy đã xuất lại các định dạng; PDF hiển thị nhãn DANH SÁCH đúng, không nhầm danh sách thành JSON.
+- Đã xem trang kết quả thật: mục lục thu gọn, danh sách, Mermaid SVG và KaTeX; báo cáo xem trước có cả hai chương. Không có console error/warn trong phiên browser kiểm tra này.
+- Thử bắt sự kiện tải PDF trên cloud browser bị timeout ở công cụ điều khiển; không xác nhận đã nhận tệp qua browser này. API tạo và tải file thật thành công, và e2e tải file qua browser fixture đạt. Đây là giới hạn kiểm chứng còn lại, không được thay bằng khẳng định download production đã kiểm chứng đầy đủ.
+
+![Trang xuất báo cáo production](screenshots/update-2026-10-02-report.jpg)
